@@ -1,4 +1,4 @@
-# subscrio
+# Subscrio TypeScript Core Library
 
 <p align="center">
   <a href="https://subscrio.com/typescript-entitlement-library/">
@@ -14,8 +14,8 @@
   <a href="https://www.npmjs.com/package/subscrio"><img src="https://img.shields.io/npm/v/subscrio?style=flat-square&logo=npm" alt="npm version"></a>
   <a href="https://github.com/subscrio/subscrio-typescript/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow?style=flat-square" alt="MIT License"></a>
   <img src="https://img.shields.io/badge/Node-%3E%3D20.19-339933?style=flat-square&logo=node.js&logoColor=white" alt="Node.js">
-  <img src="https://img.shields.io/badge/TypeScript-5+-3178C6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript">
-  <img src="https://img.shields.io/badge/PostgreSQL-Ready-4169E1?style=flat-square&logo=postgresql&logoColor=white" alt="PostgreSQL">
+  <img src="https://img.shields.io/badge/TypeScript-3178C6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript">
+  <img src="https://img.shields.io/badge/PostgreSQL-4169E1?style=flat-square&logo=postgresql&logoColor=white" alt="PostgreSQL">
 </p>
 
 <p align="center">
@@ -27,17 +27,16 @@
 
 An open-source TypeScript entitlement library for plan-based feature access, limits, subscriptions, customer overrides, and optional Stripe event processing.
 
-See the [Subscrio hub README](https://github.com/subscrio/subscrio) for cross-cutting concepts and architecture.
+See the [Subscrio hub README](https://github.com/subscrio/subscrio) for concepts, architecture, and feature resolution.
 
 ## Features
 
-- 🎯 **Feature Entitlements** - Toggle access, numeric limits, text values, and customer overrides
-- 💳 **Plans and Billing Cycles** - Model packages and subscription timing without processing payments
-- 🔄 **Subscription Lifecycle** - Track trials, renewals, cancellations, and effective access dates
-- 🏷️ **Stripe Integration** - Process supported, verified Stripe subscription events
-- 🗄️ **PostgreSQL Ready** - Built on Drizzle ORM with full type safety
-- 📊 **Feature Resolution** - Smart hierarchy: subscription overrides → plan values → defaults
-- ⚡ **TypeScript First** - Full type safety and excellent developer experience
+- Feature entitlements: toggles, numeric limits, text values, and customer overrides
+- Plans and billing cycles: model packages and subscription timing without processing payments
+- Subscription lifecycle: trials, renewals, cancellations, and effective access dates
+- Stripe integration: process supported, verified Stripe subscription events
+- PostgreSQL: Drizzle ORM with a published type-safe npm package
+- Hooks: before/after events for customers, subscriptions, and inbound Stripe payloads
 
 ## Installation
 
@@ -45,32 +44,30 @@ See the [Subscrio hub README](https://github.com/subscrio/subscrio) for cross-cu
 npm install subscrio
 ```
 
-**Prerequisites:**
-- A TypeScript application that meets the package engine requirements
-- PostgreSQL database
+**Prerequisites**
+
+- A TypeScript or JavaScript application
+- PostgreSQL (create an empty database first; Subscrio installs schema inside it)
 
 ## Quick Start
 
+Set `DATABASE_URL`, then construct Subscrio and run the schema installer once.
+
+`loadConfig()` reads environment variables into a `SubscrioConfig` object. The only required value is `DATABASE_URL` (the PostgreSQL connection string). Pass that object to `new Subscrio(config)`. You can also build `SubscrioConfig` in code instead of using `loadConfig()`. See [Configuration](#configuration) and the [core overview](https://docs.subscrio.com/reference/core-overview) for the full object.
+
 ```typescript
-import { Subscrio } from 'subscrio';
+import { Subscrio, loadConfig } from 'subscrio';
 
-// Initialize the library
-const subscrio = new Subscrio({
-  database: {
-    connectionString: 'postgresql://user:password@localhost:5432/mydb'
-  }
-});
+const config = loadConfig();
+const subscrio = new Subscrio(config);
 
-// Install database schema (first time only)
-await subscrio.installSchema();
+await subscrio.installSchema('your-admin-passphrase');
 
-// Create a product
 const product = await subscrio.products.createProduct({
   key: 'my-saas',
   displayName: 'My SaaS Product'
 });
 
-// Create a feature
 const feature = await subscrio.features.createFeature({
   key: 'max-users',
   displayName: 'Maximum Users',
@@ -78,20 +75,16 @@ const feature = await subscrio.features.createFeature({
   defaultValue: '10'
 });
 
-// Associate feature with product (using keys, not IDs)
 await subscrio.products.associateFeature(product.key, feature.key);
 
-// Create a plan (using productKey, not productId)
 const plan = await subscrio.plans.createPlan({
   productKey: product.key,
   key: 'pro-plan',
   displayName: 'Pro Plan'
 });
 
-// Set feature value on plan (using keys, not IDs)
 await subscrio.plans.setFeatureValue(plan.key, feature.key, '100');
 
-// Create a billing cycle for the plan (required for subscriptions)
 const billingCycle = await subscrio.billingCycles.createBillingCycle({
   planKey: plan.key,
   key: 'monthly',
@@ -100,31 +93,102 @@ const billingCycle = await subscrio.billingCycles.createBillingCycle({
   durationUnit: 'months'
 });
 
-// Create a customer (using key, not externalId)
 const customer = await subscrio.customers.createCustomer({
   key: 'customer-123',
   displayName: 'Acme Corp'
 });
 
-// Create a subscription (using keys and billingCycleKey, not IDs)
-const subscription = await subscrio.subscriptions.createSubscription({
+await subscrio.subscriptions.createSubscription({
   key: 'sub-001',
   customerKey: customer.key,
   billingCycleKey: billingCycle.key
 });
 
-// Check feature access (requires customerKey, productKey, and featureKey)
 const maxUsers = await subscrio.featureChecker.getValueForCustomer(
   customer.key,
   product.key,
   'max-users'
 );
-console.log(`Customer can have ${maxUsers} users`); // "100"
 ```
+
+Public APIs use string **keys**, not internal IDs. DTOs and types are exported from `subscrio`.
+
+## Configuration
+
+`SubscrioConfig` is the object passed to `new Subscrio(config)`. Only `database.connectionString` is required. Everything else is optional: SSL, pool size, Stripe, logging, hooks, and initial catalog sync.
+
+`loadConfig()` fills that object from environment variables:
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `DATABASE_URL` | Yes | PostgreSQL connection string |
+| `DATABASE_SSL` | No | `true` to enable SSL |
+| `DATABASE_POOL_SIZE` | No | Connection pool size (default: driver preset) |
+| `STRIPE_SECRET_KEY` | No | Stripe secret key for billing helpers |
+| `ADMIN_PASSPHRASE` | No | Default admin passphrase for schema install |
+| `LOG_LEVEL` | No | `debug`, `info`, `warn`, or `error` |
+
+**Connection string example:** `postgresql://postgres:password@localhost:5432/subscrio`
+
+To define products, features, plans, and billing cycles in JSON and apply them with `configSync` or `initialConfig`, see [configuration sync](https://docs.subscrio.com/reference/config-sync).
+
+The full `SubscrioConfig` shape is in the [core overview](https://docs.subscrio.com/reference/core-overview).
+
+## Database setup
+
+1. Create an empty PostgreSQL database.
+2. Point Subscrio at it with `DATABASE_URL` or `SubscrioConfig.database`.
+3. On first run, call `installSchema(adminPassphrase)`.
+4. After upgrading the package, call `migrate()`.
+
+```typescript
+const version = await subscrio.verifySchema();
+if (version == null) {
+  await subscrio.installSchema('your-admin-passphrase');
+}
+
+await subscrio.migrate();
+```
+
+Other instance methods: `dropSchema()` (destructive; tests/dev only), `runInitialConfigSync()` (when `SubscrioConfig.initialConfig` is set), and `close()`.
+
+## Stripe
+
+Stripe support is optional. You only need it if you want Subscrio to apply verified Stripe subscription events to local customers and subscriptions. You can create and manage subscriptions through the API without Stripe.
+
+Subscrio does **not** verify webhook signatures. Verify events in your app, then pass them to `processStripeEvent`.
+
+Creating a Stripe subscription requires the customer to have `externalBillingId` set (Stripe customer ID):
+
+```typescript
+await subscrio.stripe.processStripeEvent(event);
+
+await subscrio.stripe.createStripeSubscription(
+  customer.key,
+  plan.key,
+  billingCycle.key,
+  'price_123'
+);
+```
+
+See [Stripe integration](https://docs.subscrio.com/reference/stripe-integration) and the [hub overview](https://github.com/subscrio/subscrio#stripe-integration).
+
+## Documentation
+
+Full API reference, hooks, and extension guides live on [docs.subscrio.com](https://docs.subscrio.com):
+
+- [Core overview](https://docs.subscrio.com/reference/core-overview)
+- [Feature checker and resolution](https://docs.subscrio.com/reference/feature-checker)
+- [Hooks](https://docs.subscrio.com/reference/hooks)
+- [How to extend](https://docs.subscrio.com/reference/how-to-extend)
+
+**Services on `Subscrio`:** `products`, `features`, `plans`, `billingCycles`, `customers`, `subscriptions`, `featureChecker`, `stripe`, `configSync`, `hooks`.
+
+Handle `ValidationError`, `NotFoundError`, and `ConflictError` from `subscrio`.
 
 ## Building and testing
 
-From this repository root (`subscrio-typescript`):
+From this repository root:
 
 ```bash
 npm install
@@ -133,208 +197,22 @@ npm run build
 npm test
 ```
 
-`npm test` runs E2E tests against PostgreSQL. Set `TEST_DATABASE_URL` or configure `.env` (see [tests/README.md](tests/README.md)). Extension packages (`subscrio-audit-log`, `subscrio-payments`) are separate repositories with their own test suites.
-
-## API Reference
-
-### Core Services
-
-- **`subscrio.products`** - Product management
-- **`subscrio.features`** - Feature entitlement definitions
-- **`subscrio.plans`** - Subscription plan management
-- **`subscrio.billingCycles`** - Billing cycle management
-- **`subscrio.customers`** - Customer management
-- **`subscrio.subscriptions`** - Subscription lifecycle
-- **`subscrio.featureChecker`** - Feature access checking
-- **`subscrio.stripe`** - Stripe integration
-- **`subscrio.configSync`** - Sync products, features, plans, and billing cycles from JSON
-- **`subscrio.hooks`** - Before/after hooks for customers, subscriptions, and inbound Stripe events
-
-### Instance Methods
-
-- **`installSchema(adminPassphrase?)`** - Install database schema
-- **`verifySchema()`** - Check if schema is installed
-- **`migrate()`** - Run pending database migrations
-- **`runInitialConfigSync()`** - Apply `initialConfig` from constructor when configured
-- **`dropSchema()`** - Drop all database tables (destructive)
-- **`close()`** - Close database connections
-
-## Configuration
-
-```typescript
-import { Subscrio } from 'subscrio';
-
-const subscrio = new Subscrio({
-  database: {
-    connectionString: process.env.DATABASE_URL,
-    ssl: process.env.DATABASE_SSL === 'true',  // Optional
-    poolSize: parseInt(process.env.DATABASE_POOL_SIZE || '10')  // Optional
-  },
-  adminPassphrase: process.env.ADMIN_PASSPHRASE,  // Optional, min 8 chars
-  stripe: {
-    secretKey: process.env.STRIPE_SECRET_KEY  // Optional
-  },
-  logging: {
-    level: (process.env.LOG_LEVEL as 'debug' | 'info' | 'warn' | 'error') || 'info'  // Optional
-  }
-});
-```
-
-## Feature Resolution Hierarchy
-
-Subscrio uses a consistent hierarchy for feature values. See the [Subscrio hub README](https://github.com/subscrio/subscrio#feature-resolution-hierarchy) for details.
-
-```typescript
-// Check if feature is enabled for a customer in a product
-const isEnabled = await subscrio.featureChecker.isEnabledForCustomer(
-  'customer-123',  // customerKey
-  'my-saas',       // productKey
-  'advanced-analytics'  // featureKey
-);
-
-// Get feature value for a customer in a product
-const maxProjects = await subscrio.featureChecker.getValueForCustomer(
-  'customer-123',  // customerKey
-  'my-saas',       // productKey
-  'max-projects'   // featureKey
-);
-
-// Get feature value for a specific subscription
-const value = await subscrio.featureChecker.getValueForSubscription(
-  'sub-001',       // subscriptionKey
-  'max-projects'   // featureKey
-);
-```
-
-## Hooks and Extensions
-
-Each customer/subscription mutation emits `*.before` (mutable, can abort) and `*.after` (committed row, includes `entityId`). Stripe emits `stripe.received.before` / `.after` around `processStripeEvent`. Full TypeScript and .NET examples (tabbed) live in the reference docs:
-
-- [Hooks](https://github.com/subscrio/docs/blob/main/docs/reference/hooks.md)
-- [How to Extend](https://github.com/subscrio/docs/blob/main/docs/reference/how-to-extend.md) (includes audit-log and payments packaging examples)
-
-```typescript
-subscrio.hooks.on('customer.updated.before', async ({ old, new: next, source }) => {
-  await audit.write({ old, new: next, source });
-});
-
-subscrio.hooks.on('customer.created.after', async ({ entityId, new: customer }) => {
-  await notify.ready(entityId, customer);
-});
-```
-
-## Stripe Integration
-
-Subscrio accepts supported Stripe events after your application verifies them. Stripe remains responsible for payment processing. See the [Subscrio hub README](https://github.com/subscrio/subscrio#stripe-integration) for an overview.
-
-**Important**: Subscrio does NOT verify Stripe webhook signatures. You must verify signatures before passing events to Subscrio.
-
-```typescript
-import Stripe from 'stripe';
-
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
-
-// Process Stripe webhooks (implementor handles verification)
-app.post('/webhooks/stripe', 
-  express.raw({type: 'application/json'}), 
-  async (req, res) => {
-    const sig = req.headers['stripe-signature'] as string;
-    
-    try {
-      // Verify webhook signature
-      const event = stripe.webhooks.constructEvent(
-        req.body,
-        sig,
-        process.env.STRIPE_WEBHOOK_SECRET
-      );
-      
-      // Process verified event
-      await subscrio.stripe.processStripeEvent(event);
-      res.json({received: true});
-    } catch (err) {
-      console.error('Webhook error:', err.message);
-      res.status(400).send(`Webhook Error: ${err.message}`);
-    }
-  }
-);
-```
-
-### Create Stripe Subscription
-
-```typescript
-const subscription = await subscrio.stripe.createStripeSubscription(
-  customer.key,
-  plan.key,
-  billingCycle.key,
-  'price_123'
-);
-```
-
-## TypeScript Support
-
-Full TypeScript support with comprehensive type definitions:
-
-```typescript
-import { 
-  Subscrio, 
-  SubscrioConfig,
-  CreateProductDto, 
-  ProductDto,
-  CreateFeatureDto,
-  FeatureDto,
-  CreatePlanDto,
-  PlanDto,
-  CreateBillingCycleDto,
-  BillingCycleDto,
-  CreateCustomerDto,
-  CustomerDto,
-  CreateSubscriptionDto,
-  SubscriptionDto
-} from 'subscrio';
-
-// All APIs are fully typed
-const product: ProductDto = await subscrio.products.createProduct({
-  key: 'my-product',
-  displayName: 'My Product'
-});
-```
-
-### Key Concepts
-
-**Keys vs IDs**: All public APIs use **keys** (string identifiers like `'my-product'`) rather than internal IDs. Keys are:
-- Human-readable and memorable
-- Globally unique within their scope
-- Immutable once created
-- Used in all method calls and references
-
-**DTOs**: All create/update operations use DTOs (Data Transfer Objects) with Zod validation:
-- `CreateProductDto`, `CreateFeatureDto`, `CreatePlanDto`, etc.
-- All fields are validated before processing
-- Type-safe with full TypeScript inference
-
-## Best Practices
-
-1. **Schema Installation** - Run `installSchema()` once during application startup
-2. **Error Handling** - Handle `ValidationError`, `NotFoundError`, `ConflictError` appropriately
-3. **Feature Keys** - Use lowercase alphanumeric keys with hyphens (e.g., `max-projects`)
-4. **Customer keys** - Use your own stable customer keys; set `externalBillingId` only when integrating with Stripe billing
-5. **Database Connections** - Close connections with `subscrio.close()` when shutting down
+`npm test` runs tests against PostgreSQL. Set `TEST_DATABASE_URL` or configure `.env` (see [tests/README.md](tests/README.md)). Extension packages (`subscrio-audit-log`, `subscrio-payments`) live in [subscrio-extensions-audit-log](https://github.com/subscrio/subscrio-extensions-audit-log) and [subscrio-extensions-payments](https://github.com/subscrio/subscrio-extensions-payments).
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) file for details.
+MIT. See [LICENSE](LICENSE).
 
 ## Contributing
 
-Contributions are welcome! Please open issues and pull requests in this repository. For org-wide contribution guidelines, see the [Subscrio hub CONTRIBUTING guide](https://github.com/subscrio/subscrio/blob/main/CONTRIBUTING.md).
+Issues and pull requests welcome in this repo. Org-wide guidelines: [CONTRIBUTING](https://github.com/subscrio/subscrio/blob/main/CONTRIBUTING.md).
 
 ## Support
 
-- 📖 [Subscrio hub](https://github.com/subscrio/subscrio)
-- 🐛 [Report Issues](https://github.com/subscrio/subscrio-typescript/issues)
-- 💬 [Discussions](https://github.com/subscrio/subscrio/discussions) (org-wide)
-- 📚 [Testing Guide](tests/README.md)
-- 📋 [Core API reference](https://github.com/subscrio/docs/blob/main/docs/reference/core-overview.md)
+- [Subscrio hub](https://github.com/subscrio/subscrio)
+- [Report issues](https://github.com/subscrio/subscrio-typescript/issues)
+- [Discussions](https://github.com/subscrio/subscrio/discussions) (org-wide)
+- [Testing guide](tests/README.md)
 
 <p align="center">
   Maintained by <a href="https://github.com/jasenf">Jasen Fici</a> · Part of the <a href="https://github.com/subscrio">Subscrio</a> org
