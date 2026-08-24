@@ -51,7 +51,7 @@
     "build": "vite build",
     "test": "vitest run",
     "test:core": "vitest run",
-    "test:extensions": "npm run test --prefix ../../../extensions/audit-log/typescript && npm run test --prefix ../../../extensions/payments/typescript",
+    "test:extensions": "npm run test --prefix ../../extensions/audit-log/typescript && npm run test --prefix ../../extensions/payments/typescript",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "test:debug": "cross-env KEEP_TEST_DB=true vitest run",
