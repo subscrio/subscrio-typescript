@@ -1,0 +1,6 @@
+/**
+ * Deep-clone a value into a plain JSON structure for hook payloads.
+ */
+export function cloneJson<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}

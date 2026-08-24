@@ -1,0 +1,20 @@
+# Exclude development files from npm package
+sample/
+tests/
+scripts/
+docs/
+*.log
+.env*
+!.env.example
+coverage/
+.vscode/
+.idea/
+*.tsbuildinfo
+
+# Keep only essential files
+!dist/
+!src/
+!package.json
+!README.md
+!LICENSE
+!tsconfig.json
