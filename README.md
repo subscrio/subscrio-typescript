@@ -1,13 +1,33 @@
 # subscrio
 
+<p align="center">
+  <a href="https://subscrio.com/typescript-entitlement-library/">
+    <img src="https://subscrio.com/assets/images/logo/logo-576x110.png" alt="Subscrio" width="220">
+  </a>
+</p>
+
+<p align="center">
+  <strong>The entitlement engine that translates subscriptions into feature access.</strong>
+</p>
+
+<p align="center">
+  <a href="https://www.npmjs.com/package/subscrio"><img src="https://img.shields.io/npm/v/subscrio?style=flat-square&logo=npm" alt="npm version"></a>
+  <a href="https://github.com/subscrio/subscrio-typescript/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow?style=flat-square" alt="MIT License"></a>
+  <img src="https://img.shields.io/badge/Node-%3E%3D20.19-339933?style=flat-square&logo=node.js&logoColor=white" alt="Node.js">
+  <img src="https://img.shields.io/badge/TypeScript-5+-3178C6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript">
+  <img src="https://img.shields.io/badge/PostgreSQL-Ready-4169E1?style=flat-square&logo=postgresql&logoColor=white" alt="PostgreSQL">
+</p>
+
+<p align="center">
+  <a href="https://subscrio.com"><img src="https://img.shields.io/badge/Website-subscrio.com-696dc0?style=flat-square" alt="Website"></a>
+  <a href="https://docs.subscrio.com"><img src="https://img.shields.io/badge/Docs-docs.subscrio.com-696dc0?style=flat-square" alt="Documentation"></a>
+  <a href="https://github.com/subscrio/subscrio"><img src="https://img.shields.io/badge/Hub-subscrio%2Fsubscrio-181717?style=flat-square&logo=github" alt="Hub"></a>
+  <a href="https://github.com/subscrio/subscrio-typescript/issues"><img src="https://img.shields.io/badge/Issues-report-181717?style=flat-square&logo=github" alt="Issues"></a>
+</p>
+
 An open-source TypeScript entitlement library for plan-based feature access, limits, subscriptions, customer overrides, and optional Stripe event processing.
 
-**The entitlement engine that translates subscriptions into feature access.**
-
 See the [Subscrio hub README](https://github.com/subscrio/subscrio) for cross-cutting concepts and architecture.
-
-[![npm version](https://badge.fury.io/js/subscrio.svg)](https://badge.fury.io/js/subscrio)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ## Features
 
@@ -18,8 +38,6 @@ See the [Subscrio hub README](https://github.com/subscrio/subscrio) for cross-cu
 - 🗄️ **PostgreSQL Ready** - Built on Drizzle ORM with full type safety
 - 📊 **Feature Resolution** - Smart hierarchy: subscription overrides → plan values → defaults
 - ⚡ **TypeScript First** - Full type safety and excellent developer experience
-
-For a complete overview of Subscrio's features and concepts, see the [Subscrio hub README](https://github.com/subscrio/subscrio).
 
 ## Installation
 
@@ -317,3 +335,7 @@ Contributions are welcome! Please open issues and pull requests in this reposito
 - 💬 [Discussions](https://github.com/subscrio/subscrio/discussions) (org-wide)
 - 📚 [Testing Guide](tests/README.md)
 - 📋 [Core API reference](https://github.com/subscrio/docs/blob/main/docs/reference/core-overview.md)
+
+<p align="center">
+  Maintained by <a href="https://github.com/jasenf">Jasen Fici</a> · Part of the <a href="https://github.com/subscrio">Subscrio</a> org
+</p>
