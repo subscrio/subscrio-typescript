@@ -9,7 +9,8 @@ const configSchema = z.object({
   }),
   adminPassphrase: z.string().min(8).optional(),
   stripe: z.object({
-    secretKey: z.string().startsWith('sk_')
+    secretKey: z.string().startsWith('sk_'),
+    webhookSecret: z.string().optional()
   }).optional(),
   logging: z.object({
     level: z.enum(['debug', 'info', 'warn', 'error'])
@@ -30,7 +31,8 @@ export function loadConfig(): SubscrioConfig {
     },
     adminPassphrase: process.env.ADMIN_PASSPHRASE,
     stripe: process.env.STRIPE_SECRET_KEY ? {
-      secretKey: process.env.STRIPE_SECRET_KEY
+      secretKey: process.env.STRIPE_SECRET_KEY,
+      webhookSecret: process.env.STRIPE_WEBHOOK_SECRET
     } : undefined,
     logging: {
       level: (process.env.LOG_LEVEL as 'error' | 'warn' | 'info' | 'debug') || 'info'

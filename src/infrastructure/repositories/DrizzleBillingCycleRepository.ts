@@ -6,6 +6,7 @@ import { billing_cycles } from '../database/schema.js';
 import { eq, and, like, or, desc, asc } from 'drizzle-orm';
 import { BillingCycleFilterDto } from '../../application/dtos/BillingCycleDto.js';
 import { DurationUnit } from '../../domain/value-objects/DurationUnit.js';
+import { applyPaging } from './applyPaging.js';
 
 export class DrizzleBillingCycleRepository implements IBillingCycleRepository {
   constructor(private readonly db: DrizzleDb) {}
@@ -116,13 +117,7 @@ export class DrizzleBillingCycleRepository implements IBillingCycleRepository {
         query = query.orderBy(sortOrder === 'desc' ? desc(billing_cycles.created_at) : asc(billing_cycles.created_at)) as typeof query;
       }
 
-      // Apply pagination
-      if (filters.limit) {
-        query = query.limit(filters.limit) as typeof query;
-      }
-      if (filters.offset) {
-        query = query.offset(filters.offset) as typeof query;
-      }
+      query = applyPaging(query, filters.offset, filters.limit) as typeof query;
     } else {
       query = query.orderBy(asc(billing_cycles.created_at)) as typeof query;
     }
@@ -143,16 +138,6 @@ export class DrizzleBillingCycleRepository implements IBillingCycleRepository {
 
   async delete(id: number): Promise<void> {
     await this.db.delete(billing_cycles).where(eq(billing_cycles.id, id));
-  }
-
-  async exists(id: number): Promise<boolean> {
-    const [record] = await this.db
-      .select({ id: billing_cycles.id })
-      .from(billing_cycles)
-      .where(eq(billing_cycles.id, id))
-      .limit(1);
-    
-    return !!record;
   }
 }
 

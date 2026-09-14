@@ -1,8 +1,8 @@
 import { Entity } from '../base/Entity.js';
 import { FeatureStatus } from '../value-objects/FeatureStatus.js';
 import { FeatureValueType } from '../value-objects/FeatureValueType.js';
-import { DomainError } from '../../application/errors/index.js';
-import { now } from '../../infrastructure/utils/date.js';
+import { DomainError } from '../errors/DomainError.js';
+import { now } from '../clock.js';
 
 export interface FeatureProps {
   key: string;
@@ -58,6 +58,11 @@ export class Feature extends Entity<FeatureProps> {
       throw new DomainError('Display name cannot be empty');
     }
     this.props.displayName = name;
+    this.props.updatedAt = now();
+  }
+
+  setValueType(valueType: FeatureValueType): void {
+    this.props.valueType = valueType;
     this.props.updatedAt = now();
   }
 

@@ -5,6 +5,8 @@ import { DrizzleDb } from '../database/drizzle.js';
 import { plans, plan_features, billing_cycles, products } from '../database/schema.js';
 import { eq, and, like, or, desc, asc, inArray } from 'drizzle-orm';
 import { PlanFilterDto } from '../../application/dtos/PlanDto.js';
+import { applyPaging } from './applyPaging.js';
+import { FeatureValueMapper } from '../../application/mappers/FeatureValueMapper.js';
 
 export class DrizzlePlanRepository implements IPlanRepository {
   constructor(private readonly db: DrizzleDb) {}
@@ -168,12 +170,7 @@ export class DrizzlePlanRepository implements IPlanRepository {
       .from(plan_features)
       .where(eq(plan_features.plan_id, planId));
 
-    return records.map(r => ({
-      featureId: r.feature_id as number,
-      value: r.value,
-      createdAt: new Date(r.created_at),
-      updatedAt: new Date(r.updated_at)
-    }));
+    return FeatureValueMapper.toPlanFeatureValues(records);
   }
 
   async findByProduct(productKey: string): Promise<Plan[]> {
@@ -253,13 +250,7 @@ export class DrizzlePlanRepository implements IPlanRepository {
         query = query.orderBy(sortOrder === 'desc' ? desc(plans.created_at) : asc(plans.created_at)) as typeof query;
       }
 
-      // Apply pagination
-      if (filters.limit) {
-        query = query.limit(filters.limit) as typeof query;
-      }
-      if (filters.offset) {
-        query = query.offset(filters.offset) as typeof query;
-      }
+      query = applyPaging(query, filters.offset, filters.limit) as typeof query;
     } else {
       query = query.orderBy(asc(plans.created_at)) as typeof query;
     }
@@ -326,16 +317,6 @@ export class DrizzlePlanRepository implements IPlanRepository {
 
   async delete(id: number): Promise<void> {
     await this.db.delete(plans).where(eq(plans.id, id));
-  }
-
-  async exists(id: number): Promise<boolean> {
-    const [record] = await this.db
-      .select({ id: plans.id })
-      .from(plans)
-      .where(eq(plans.id, id))
-      .limit(1);
-    
-    return !!record;
   }
 
   async hasBillingCycles(planId: number): Promise<boolean> {

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { CustomerDto } from './CustomerDto.js';
+import { paginationFields, sortOrderField } from './filterFields.js';
 
 // Helper to transform empty strings to undefined for optional date fields
 const optionalDateField = () =>
@@ -41,6 +42,7 @@ export const UpdateSubscriptionDtoSchema = z.object({
   expirationDate: optionalDateField(),
   cancellationDate: optionalDateField(),
   trialEndDate: optionalDateField(),
+  clearTrialEndDate: z.boolean().optional(),
   currentPeriodStart: optionalDateField(),
   currentPeriodEnd: optionalDateField(),
   stripeSubscriptionId: z.preprocess(
@@ -68,8 +70,16 @@ export interface SubscriptionDto {
   stripeSubscriptionId?: string | null;
   metadata?: Record<string, unknown> | null;
   customer?: CustomerDto | null;
+  featureOverrides?: FeatureOverrideDto[];
   createdAt: string;
   updatedAt: string;
+}
+
+export interface FeatureOverrideDto {
+  featureKey: string;
+  value: string;
+  type: string;
+  createdAt: string;
 }
 
 export const SubscriptionFilterDtoSchema = z.object({
@@ -79,9 +89,8 @@ export const SubscriptionFilterDtoSchema = z.object({
   status: z.enum(['pending', 'active', 'trial', 'cancelled', 'cancellation_pending', 'expired']).optional(),
   isArchived: z.boolean().optional(),
   sortBy: z.enum(['activationDate', 'expirationDate', 'createdAt', 'updatedAt', 'currentPeriodStart', 'currentPeriodEnd']).optional(),
-  sortOrder: z.enum(['asc', 'desc']).optional(),
-  limit: z.number().int().min(1).max(100).optional().default(50),
-  offset: z.number().int().min(0).optional().default(0)
+  sortOrder: sortOrderField,
+  ...paginationFields
 });
 
 export type SubscriptionFilterDto = z.infer<typeof SubscriptionFilterDtoSchema>;
@@ -123,9 +132,8 @@ export const DetailedSubscriptionFilterDtoSchema = z.object({
   
   // Sorting and pagination
   sortBy: z.enum(['activationDate', 'expirationDate', 'createdAt', 'updatedAt', 'currentPeriodStart', 'currentPeriodEnd']).optional(),
-  sortOrder: z.enum(['asc', 'desc']).optional(),
-  limit: z.number().int().min(1).max(100).optional().default(50),
-  offset: z.number().int().min(0).optional().default(0)
+  sortOrder: sortOrderField,
+  ...paginationFields
 });
 
 export type DetailedSubscriptionFilterDto = z.infer<typeof DetailedSubscriptionFilterDtoSchema>;

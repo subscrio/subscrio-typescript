@@ -3,6 +3,8 @@ import { CreateProductDtoSchema } from './ProductDto.js';
 import { CreatePlanDtoSchema } from './PlanDto.js';
 import { CreateBillingCycleObjectSchema } from './BillingCycleDto.js';
 import { BaseFeatureDtoSchema } from './FeatureDto.js';
+import { FeatureValueValidator } from '../utils/FeatureValueValidator.js';
+import { FeatureValueType } from '../../domain/value-objects/FeatureValueType.js';
 
 /**
  * Config Sync DTOs
@@ -61,14 +63,7 @@ export type PlanConfig = z.infer<typeof PlanConfigSchema>;
 export const FeatureConfigSchema = BaseFeatureDtoSchema.extend({
   archived: z.boolean().optional()
 }).refine((data) => {
-  if (data.valueType === 'toggle') {
-    return data.defaultValue === 'true' || data.defaultValue === 'false';
-  }
-  if (data.valueType === 'numeric') {
-    const num = Number(data.defaultValue);
-    return !isNaN(num) && isFinite(num);
-  }
-  return true;
+  return FeatureValueValidator.isValid(data.defaultValue, data.valueType as FeatureValueType);
 }, {
   message: 'Invalid default value for the selected value type. Toggle must be "true" or "false", Numeric must be a valid number.',
   path: ['defaultValue']
@@ -275,25 +270,13 @@ export const ConfigSyncDtoSchema = z.object({
             const feature = data.features.find(f => f.key === featureKey);
             if (feature) {
               const value = plan.featureValues[featureKey];
-              if (feature.valueType === 'toggle') {
-                if (value !== 'true' && value !== 'false') {
-                  ctx.addIssue({
-                    code: z.ZodIssueCode.custom,
-                    message: `Feature value for '${featureKey}' in plan '${plan.key}' must be "true" or "false" (toggle type)`,
-                    path: ['products']
-                  });
-                }
-              } else if (feature.valueType === 'numeric') {
-                const num = Number(value);
-                if (isNaN(num) || !isFinite(num)) {
-                  ctx.addIssue({
-                    code: z.ZodIssueCode.custom,
-                    message: `Feature value for '${featureKey}' in plan '${plan.key}' must be a valid number (numeric type)`,
-                    path: ['products']
-                  });
-                }
+              if (!FeatureValueValidator.isValid(value, feature.valueType as FeatureValueType)) {
+                ctx.addIssue({
+                  code: z.ZodIssueCode.custom,
+                  message: `Feature value for '${featureKey}' in plan '${plan.key}' is invalid for ${feature.valueType} type`,
+                  path: ['products']
+                });
               }
-              // Text type accepts any string, no validation needed
             }
           }
         }

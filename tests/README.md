@@ -235,7 +235,8 @@ Every public method must have tests:
 
 ### StripeIntegrationService (`subscrio.stripe`)
 - `processStripeEvent(event)` - Process verified Stripe webhook event
-- `createStripeSubscription(customerKey, planKey, billingCycleKey, stripePriceId)` - Create Stripe subscription
+- `constructStripeEvent(payload, signatureHeader)` - Verify webhook signature
+- `createCheckoutSession(params)` - Create a Stripe Checkout session URL
 
 ## Example Test: Feature Resolution Hierarchy
 

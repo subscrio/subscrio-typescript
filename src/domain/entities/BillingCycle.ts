@@ -1,7 +1,7 @@
 import { Entity } from '../base/Entity.js';
 import { DurationUnit } from '../value-objects/DurationUnit.js';
 import { BillingCycleStatus } from '../value-objects/BillingCycleStatus.js';
-import { now } from '../../infrastructure/utils/date.js';
+import { now } from '../clock.js';
 
 export interface BillingCycleProps {
   planId: number;

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { MAX_KEY_LENGTH, MIN_KEY_LENGTH, MAX_DISPLAY_NAME_LENGTH, MIN_DISPLAY_NAME_LENGTH, MAX_DESCRIPTION_LENGTH } from '../constants/index.js';
+import { paginationFields } from './filterFields.js';
 
 export const CreateProductDtoSchema = z.object({
   key: z.string()
@@ -39,8 +40,7 @@ export interface ProductDto {
 export const ProductFilterDtoSchema = z.object({
   status: z.enum(['active', 'archived']).optional(),
   search: z.string().optional(),
-  limit: z.number().int().min(1).max(100).default(50),
-  offset: z.number().int().min(0).default(0),
+  ...paginationFields,
   sortBy: z.enum(['displayName', 'createdAt']).optional(),
   sortOrder: z.enum(['asc', 'desc']).default('asc')
 });

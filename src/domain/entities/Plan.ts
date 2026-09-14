@@ -1,7 +1,7 @@
 import { Entity } from '../base/Entity.js';
 import { PlanStatus } from '../value-objects/PlanStatus.js';
-import { DomainError } from '../../application/errors/index.js';
-import { now } from '../../infrastructure/utils/date.js';
+import { DomainError } from '../errors/DomainError.js';
+import { now } from '../clock.js';
 
 export interface PlanFeatureValue {
   featureId: number;

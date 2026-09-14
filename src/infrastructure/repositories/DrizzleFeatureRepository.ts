@@ -5,6 +5,7 @@ import { DrizzleDb } from '../database/drizzle.js';
 import { features, product_features, plan_features, subscription_feature_overrides } from '../database/schema.js';
 import { eq, and, like, or, desc, asc, inArray } from 'drizzle-orm';
 import { FeatureFilterDto } from '../../application/dtos/FeatureDto.js';
+import { applyPaging } from './applyPaging.js';
 
 export class DrizzleFeatureRepository implements IFeatureRepository {
   constructor(private readonly db: DrizzleDb) {}
@@ -106,13 +107,7 @@ export class DrizzleFeatureRepository implements IFeatureRepository {
         query = query.orderBy(sortOrder === 'desc' ? desc(features.created_at) : asc(features.created_at)) as typeof query;
       }
 
-      // Apply pagination
-      if (filters.limit) {
-        query = query.limit(filters.limit) as typeof query;
-      }
-      if (filters.offset) {
-        query = query.offset(filters.offset) as typeof query;
-      }
+      query = applyPaging(query, filters.offset, filters.limit) as typeof query;
     } else {
       query = query.orderBy(asc(features.created_at)) as typeof query;
     }
@@ -158,16 +153,6 @@ export class DrizzleFeatureRepository implements IFeatureRepository {
 
   async delete(id: number): Promise<void> {
     await this.db.delete(features).where(eq(features.id, id));
-  }
-
-  async exists(id: number): Promise<boolean> {
-    const [record] = await this.db
-      .select({ id: features.id })
-      .from(features)
-      .where(eq(features.id, id))
-      .limit(1);
-    
-    return !!record;
   }
 
   async hasProductAssociations(featureId: number): Promise<boolean> {

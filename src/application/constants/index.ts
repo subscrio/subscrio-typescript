@@ -1,10 +1,8 @@
+export { MAX_DISPLAY_NAME_LENGTH, MIN_DISPLAY_NAME_LENGTH } from '../../domain/constants.js';
+
 /**
  * Application constants to avoid magic numbers and strings
  */
-
-// Display name constraints
-export const MAX_DISPLAY_NAME_LENGTH = 255;
-export const MIN_DISPLAY_NAME_LENGTH = 1;
 
 // Key constraints
 export const MAX_KEY_LENGTH = 255;
@@ -26,9 +24,6 @@ export const MAX_FEATURE_VALUE_LENGTH = 1000;
 
 // Subscription limits
 export const MAX_SUBSCRIPTIONS_PER_CUSTOMER = 100;
-
-// Cache settings
-export const PLAN_CACHE_SIZE = 1000;
 
 // Performance settings
 export const BATCH_SIZE = 50;

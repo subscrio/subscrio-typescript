@@ -1,14 +1,8 @@
-/**
- * Standardized date utilities for consistent date handling across the application
- */
+import { now as domainNow } from '../../domain/clock.js';
 
-/**
- * Get the current date/time in UTC
- * This ensures all dates are consistent regardless of server timezone
- */
-export function now(): Date {
-  return new Date();
-}
+export { now } from '../../domain/clock.js';
+
+const _now = domainNow;
 
 /**
  * Get the current date/time as ISO string
@@ -61,21 +55,21 @@ export function addYears(date: Date, years: number): Date {
  * Check if a date is in the past
  */
 export function isPast(date: Date): boolean {
-  return date < now();
+  return date < _now();
 }
 
 /**
  * Check if a date is in the future
  */
 export function isFuture(date: Date): boolean {
-  return date > now();
+  return date > _now();
 }
 
 /**
  * Check if a date is today
  */
 export function isToday(date: Date): boolean {
-  const today = now();
+  const today = _now();
   return date.toDateString() === today.toDateString();
 }
 

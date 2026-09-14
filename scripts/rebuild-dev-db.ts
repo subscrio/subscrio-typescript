@@ -1,5 +1,6 @@
 import { Subscrio } from '../src/Subscrio.js';
-import { SubscrioConfig } from '../src/config/types.js';
+import type { SubscrioConfig } from '../src/config/types.js';
+import { redactConnectionString } from '../src/infrastructure/utils/redactConnectionString.js';
 import * as dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
 import { dirname, resolve } from 'path';
@@ -7,22 +8,21 @@ import { dirname, resolve } from 'path';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-// Load .env from packages/core if it exists
 dotenv.config({ path: resolve(__dirname, '../.env') });
 
 console.log('🔄 Rebuilding database...\n');
 
 try {
-  // Manual config with fallback
   const config: SubscrioConfig = {
     database: {
-      connectionString: process.env.DATABASE_URL || 
-        'postgresql://postgres:PASSWORD@localhost:5432/postgres'
-    }
+      connectionString: process.env.DATABASE_URL ||
+        'postgresql://postgres:postgres@localhost:5432/postgres'
+    },
+    adminPassphrase: process.env.ADMIN_PASSPHRASE
   };
   
   console.log('✅ Configuration loaded');
-  console.log(`📦 Database: ${config.database.connectionString}\n`);
+  console.log(`📦 Database: ${redactConnectionString(config.database.connectionString)}\n`);
 
   // Create Subscrio instance
   const subscrio = new Subscrio(config);

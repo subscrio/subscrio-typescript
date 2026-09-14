@@ -8,6 +8,5 @@ export interface IBillingCycleRepository {
   findByPlan(planId: number): Promise<BillingCycle[]>;
   findAll(filters?: BillingCycleFilterDto): Promise<BillingCycle[]>;
   delete(id: number): Promise<void>;
-  exists(id: number): Promise<boolean>;
 }
 

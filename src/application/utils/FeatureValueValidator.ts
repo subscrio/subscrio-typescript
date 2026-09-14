@@ -11,6 +11,19 @@ export class FeatureValueValidator {
    * @param valueType - The type of the feature
    * @throws {ValidationError} If the value is invalid for the type
    */
+  static tryValidate(value: string, valueType: FeatureValueType): { ok: true } | { ok: false; message: string } {
+    try {
+      this.validate(value, valueType);
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, message: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  static isValid(value: string, valueType: FeatureValueType): boolean {
+    return this.tryValidate(value, valueType).ok;
+  }
+
   static validate(value: string, valueType: FeatureValueType): void {
     switch (valueType) {
       case FeatureValueType.Toggle:
@@ -25,7 +38,6 @@ export class FeatureValueValidator {
         }
         break;
       case FeatureValueType.Text:
-        // Text features accept any string value
         break;
       default:
         throw new ValidationError(`Unknown feature value type: ${valueType}`);

@@ -388,5 +388,116 @@ describe('Stripe Integration E2E Tests', () => {
       expect(stored?.currentPeriodEnd).toBe(new Date(periodEnd * 1000).toISOString());
     });
   });
+
+  describe('API honesty and webhook helper', () => {
+    test('createStripeSubscription is not a real create API', async () => {
+      await expect(
+        subscrio.stripe.createStripeSubscription('c', 'p', 'b', 'price_x')
+      ).rejects.toThrow(/not supported/);
+    });
+
+    test('constructStripeEvent requires a webhook secret', () => {
+      expect(() => subscrio.stripe.constructStripeEvent('{}', 'sig')).toThrow(/webhook secret/);
+    });
+
+    test('constructStripeEvent verifies a signed payload', async () => {
+      const withSecret = new Subscrio({
+        database: { connectionString: getTestConnectionString() },
+        stripe: { secretKey: 'sk_test_abcdefghijklmnopqrstuvwxyz', webhookSecret: 'whsec_test_secret' }
+      });
+      const payload = JSON.stringify({
+        id: 'evt_test',
+        object: 'event',
+        type: 'customer.created',
+        data: { object: { id: 'cus_x', object: 'customer' } }
+      });
+      const header = Stripe.webhooks.generateTestHeaderString({
+        payload,
+        secret: 'whsec_test_secret'
+      });
+      const event = withSecret.stripe.constructStripeEvent(payload, header);
+      expect(event.type).toBe('customer.created');
+    });
+
+    test('unknown Stripe status fails closed', async () => {
+      const priceId = uniqueId('price');
+      await createPlanHierarchy(priceId);
+      const customer = await createCustomer();
+      const stripeCustomerId = uniqueId('cus');
+
+      await expect(
+        subscrio.stripe.processStripeEvent(
+          buildStripeEvent(
+            'customer.subscription.created',
+            stripeSubscriptionPayload({
+              id: uniqueId('sub_stripe'),
+              customerId: stripeCustomerId,
+              priceId,
+              status: 'not-a-real-status' as Stripe.Subscription.Status,
+              metadata: { subscrioCustomerKey: customer.key }
+            })
+          )
+        )
+      ).rejects.toThrow(/Unsupported Stripe subscription status/);
+    });
+
+    test('paused Stripe status is accepted and does not fail closed', async () => {
+      const priceId = uniqueId('price');
+      await createPlanHierarchy(priceId);
+      const customer = await createCustomer();
+      const stripeCustomerId = uniqueId('cus');
+      const subscriptionKey = uniqueId('sub');
+
+      await expect(
+        subscrio.stripe.processStripeEvent(
+          buildStripeEvent(
+            'customer.subscription.created',
+            stripeSubscriptionPayload({
+              id: uniqueId('sub_stripe'),
+              customerId: stripeCustomerId,
+              priceId,
+              status: 'paused',
+              metadata: {
+                subscrioCustomerKey: customer.key,
+                subscrioSubscriptionKey: subscriptionKey
+              }
+            })
+          )
+        )
+      ).resolves.toBeUndefined();
+
+      expect(await subscrio.subscriptions.getSubscription(subscriptionKey)).not.toBeNull();
+    });
+
+    test('refuses to overwrite a different externalBillingId', async () => {
+      const customer = await createCustomer();
+      await subscrio.customers.updateCustomer(customer.key, {
+        externalBillingId: uniqueId('cus-existing')
+      });
+
+      await expect(
+        subscrio.stripe.processStripeEvent(
+          buildStripeEvent(
+            'customer.created',
+            stripeCustomerPayload({
+              id: uniqueId('cus-new'),
+              metadata: { subscrioCustomerKey: customer.key }
+            })
+          )
+        )
+      ).rejects.toThrow(/Refusing to overwrite externalBillingId/);
+    });
+
+    test('createCheckoutSession fails closed without Stripe credentials or price id', async () => {
+      await expect(
+        subscrio.stripe.createCheckoutSession({
+          customerKey: 'missing',
+          billingCycleKey: 'missing',
+          successUrl: 'https://example.com/ok',
+          cancelUrl: 'https://example.com/cancel'
+        })
+      ).rejects.toThrow();
+    });
+  });
 });
 

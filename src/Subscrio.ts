@@ -2,6 +2,7 @@ import type { SubscrioConfig, InitialConfigSync } from './config/types.js';
 import type { ConfigSyncReport } from './application/dtos/ConfigSyncDto.js';
 import { initializeDatabase, DrizzleDb, closeDatabase } from './infrastructure/database/drizzle.js';
 import { SchemaInstaller } from './infrastructure/database/installer.js';
+import { detectDatabaseDialect } from './infrastructure/database/dialect.js';
 
 // Repositories
 import { IProductRepository } from './application/repositories/IProductRepository.js';
@@ -41,6 +42,7 @@ export class Subscrio {
   private readonly db: DrizzleDb;
   private readonly installer: SchemaInstaller;
   private readonly _initialConfig?: InitialConfigSync;
+  private readonly adminPassphrase?: string;
 
   // Repositories (private)
   private readonly productRepo: IProductRepository;
@@ -66,8 +68,12 @@ export class Subscrio {
   constructor(config: SubscrioConfig) {
     // Initialize database
     this.db = initializeDatabase(config.database);
-    this.installer = new SchemaInstaller(this.db);
+    this.installer = new SchemaInstaller(
+      this.db,
+      config.database.databaseType ?? detectDatabaseDialect(config.database.connectionString)
+    );
     this.hooks = new HookDispatcher(config.hooks);
+    this.adminPassphrase = config.adminPassphrase;
 
     // Initialize repositories
     this.productRepo = new DrizzleProductRepository(this.db);
@@ -140,7 +146,7 @@ export class Subscrio {
    * Install database schema
    */
   async installSchema(adminPassphrase?: string): Promise<void> {
-    await this.installer.install(adminPassphrase);
+    await this.installer.install(adminPassphrase ?? this.adminPassphrase);
   }
 
   /**
@@ -164,10 +170,11 @@ export class Subscrio {
   }
 
   /**
-   * Drop all database tables (WARNING: Destructive!)
+   * Drop all database tables (WARNING: Destructive!).
+   * When an admin passphrase hash exists, the passphrase must match.
    */
-  async dropSchema(): Promise<void> {
-    await this.installer.dropAll();
+  async dropSchema(adminPassphrase?: string): Promise<void> {
+    await this.installer.dropAll(adminPassphrase ?? this.adminPassphrase);
   }
 
   /**

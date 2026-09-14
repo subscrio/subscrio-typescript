@@ -1001,22 +1001,13 @@ describe('Config Sync E2E Tests', () => {
       };
 
       const report = await subscrio.configSync.syncFromJson(config);
-
-      // Verify the onExpireTransitionToBillingCycleKey is preserved
       const planAfter = await subscrio.plans.getPlan(planKey);
 
-      console.log('Plan before:', planBefore?.onExpireTransitionToBillingCycleKey);
-      console.log('Plan after:', planAfter?.onExpireTransitionToBillingCycleKey);
-      console.log('Plan displayName before:', planBefore?.displayName);
-      console.log('Plan displayName after:', planAfter?.displayName);
-
-      // Should be preserved since it's not in config
-      expect(planAfter?.onExpireTransitionToBillingCycleKey).toBe(transitionCycleKey);
-      // But displayName should be updated
+      expect(planAfter?.onExpireTransitionToBillingCycleKey).toBeNull();
       expect(planAfter?.displayName).toBe('Preserve Plan Updated');
     });
 
-    test('does not clear onExpireTransitionToBillingCycleKey when field is undefined in config', async () => {
+    test('preserves onExpireTransitionToBillingCycleKey when the field is present in config', async () => {
       const productKey = uniqueKey('clear-test-product');
       const planKey = uniqueKey('clear-plan');
       const cycleKey = uniqueKey('clear-cycle');
@@ -1063,8 +1054,7 @@ describe('Config Sync E2E Tests', () => {
               {
                 key: planKey,
                 displayName: 'Clear Plan',
-                // onExpireTransitionToBillingCycleKey is undefined (not in config)
-                // This should NOT clear the existing value
+                onExpireTransitionToBillingCycleKey: cycleKey,
                 billingCycles: [
                   {
                     key: cycleKey,
@@ -1079,15 +1069,9 @@ describe('Config Sync E2E Tests', () => {
         ]
       };
 
-      const report = await subscrio.configSync.syncFromJson(config);
+      await subscrio.configSync.syncFromJson(config);
 
       const planAfter = await subscrio.plans.getPlan(planKey);
-
-      console.log('Plan before:', planBefore?.onExpireTransitionToBillingCycleKey);
-      console.log('Plan after:', planAfter?.onExpireTransitionToBillingCycleKey);
-
-      // When field is not in config, it should be preserved (not cleared)
-      // This tests that undefined in config doesn't clear existing values
       expect(planAfter?.onExpireTransitionToBillingCycleKey).toBe(cycleKey);
     });
 
@@ -1170,14 +1154,70 @@ describe('Config Sync E2E Tests', () => {
       const report = await subscrio.configSync.syncFromJson(config);
 
       const planAfter = await subscrio.plans.getPlan(planKey);
-
-      console.log('Plan before:', planBefore?.onExpireTransitionToBillingCycleKey);
-      console.log('Plan after:', planAfter?.onExpireTransitionToBillingCycleKey);
-      console.log('Sync report updated plans:', report.updated.plans);
-
-      // Should be updated to cycle2
       expect(planAfter?.onExpireTransitionToBillingCycleKey).toBe(cycle2Key);
       expect(report.updated.plans).toBeGreaterThanOrEqual(1);
+    });
+
+    test('clears on-expire transition when omitted from config', async () => {
+      const suffix = Date.now();
+      const productKey = `sync-clear-product-${suffix}`;
+      const planKey = `sync-clear-plan-${suffix}`;
+      const cycleKey = `sync-clear-cycle-${suffix}`;
+      const featureKey = `sync-clear-feat-${suffix}`;
+
+      await subscrio.features.createFeature({
+        key: featureKey,
+        displayName: 'Feat',
+        valueType: 'toggle',
+        defaultValue: 'false'
+      });
+      await subscrio.products.createProduct({
+        key: productKey,
+        displayName: 'Product'
+      });
+      await subscrio.plans.createPlan({
+        productKey,
+        key: planKey,
+        displayName: 'Plan'
+      });
+      await subscrio.billingCycles.createBillingCycle({
+        planKey,
+        key: cycleKey,
+        displayName: 'Cycle',
+        durationValue: 1,
+        durationUnit: 'months'
+      });
+      await subscrio.plans.updatePlan(planKey, {
+        onExpireTransitionToBillingCycleKey: cycleKey
+      });
+
+      await subscrio.configSync.syncFromJson({
+        version: '1.0',
+        features: [
+          { key: featureKey, displayName: 'Feat', valueType: 'numeric', defaultValue: '1' }
+        ],
+        products: [
+          {
+            key: productKey,
+            displayName: 'Product',
+            plans: [
+              {
+                key: planKey,
+                displayName: 'Plan',
+                billingCycles: [
+                  { key: cycleKey, displayName: 'Cycle', durationValue: 1, durationUnit: 'months' }
+                ]
+              }
+            ]
+          }
+        ]
+      });
+
+      const plan = await subscrio.plans.getPlan(planKey);
+      expect(plan?.onExpireTransitionToBillingCycleKey).toBeNull();
+
+      const feature = await subscrio.features.getFeature(featureKey);
+      expect(feature?.valueType).toBe('numeric');
     });
   });
 });

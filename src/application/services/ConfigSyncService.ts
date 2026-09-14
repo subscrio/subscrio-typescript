@@ -15,6 +15,7 @@ import { CreateProductDto, UpdateProductDto, ProductDto } from '../dtos/ProductD
 import { CreatePlanDto, UpdatePlanDto, PlanDto } from '../dtos/PlanDto.js';
 import { CreateBillingCycleDto, UpdateBillingCycleDto, BillingCycleDto } from '../dtos/BillingCycleDto.js';
 import { ValidationError } from '../errors/index.js';
+import { loadAllPages } from '../utils/PagedListLoader.js';
 
 /**
  * Deep equality check for objects (for metadata comparison)
@@ -152,10 +153,18 @@ export class ConfigSyncService {
 
     // Phase 2: Load Current State
     // Use maximum allowed limit to get as many entities as possible
-    const existingProducts = await this.subscrio.products.listProducts({ limit: 100, offset: 0, sortOrder: 'asc' });
-    const existingFeatures = await this.subscrio.features.listFeatures({ limit: 100, offset: 0 });
-    const existingPlans = await this.subscrio.plans.listPlans({ limit: 100, offset: 0, sortOrder: 'asc' });
-    const existingBillingCycles = await this.subscrio.billingCycles.listBillingCycles({ limit: 100, offset: 0, sortOrder: 'asc' });
+    const existingProducts = await loadAllPages((offset, limit) =>
+      this.subscrio.products.listProducts({ limit, offset, sortOrder: 'asc' })
+    );
+    const existingFeatures = await loadAllPages((offset, limit) =>
+      this.subscrio.features.listFeatures({ limit, offset })
+    );
+    const existingPlans = await loadAllPages((offset, limit) =>
+      this.subscrio.plans.listPlans({ limit, offset, sortOrder: 'asc' })
+    );
+    const existingBillingCycles = await loadAllPages((offset, limit) =>
+      this.subscrio.billingCycles.listBillingCycles({ limit, offset, sortOrder: 'asc' })
+    );
 
     // Create lookup maps by key
     const productsByKey = new Map(existingProducts.map(p => [p.key, p]));
@@ -266,26 +275,7 @@ export class ConfigSyncService {
       try {
         const existing = productsByKey.get(productConfig.key);
         
-        console.log(`[ConfigSync] Processing product: ${productConfig.key}`);
-        console.log(`[ConfigSync] Product found in lookup: ${!!existing}`);
-        if (existing) {
-          console.log(`[ConfigSync] Existing product:`, { 
-            key: existing.key, 
-            displayName: existing.displayName, 
-            description: existing.description,
-            status: existing.status 
-          });
-        }
-        console.log(`[ConfigSync] Config product:`, { 
-          key: productConfig.key, 
-          displayName: productConfig.displayName, 
-          description: productConfig.description,
-          archived: productConfig.archived 
-        });
-        
         if (!existing) {
-          // Create new product
-          console.log(`[ConfigSync] Creating new product: ${productConfig.key}`);
           const createDto: CreateProductDto = {
             key: productConfig.key,
             displayName: productConfig.displayName,
@@ -295,27 +285,17 @@ export class ConfigSyncService {
           
           await this.subscrio.products.createProduct(createDto);
           report.created.products++;
-          console.log(`[ConfigSync] Product created, count: ${report.created.products}`);
           
-          // Archive if needed
           if (productConfig.archived === true) {
             await this.subscrio.products.archiveProduct(productConfig.key);
             report.archived.products++;
-            console.log(`[ConfigSync] Product archived after creation, count: ${report.archived.products}`);
           }
         } else {
-          // Check if entity needs updating
           const needsUpdate = hasProductChanges(productConfig, existing);
-          console.log(`[ConfigSync] Product needs update: ${needsUpdate}`);
-          console.log(`[ConfigSync] Change comparison:`, {
-            displayName: `${productConfig.displayName} !== ${existing.displayName} = ${productConfig.displayName !== existing.displayName}`,
-            description: `${normalizeValue(productConfig.description)} !== ${normalizeValue(existing.description)} = ${normalizeValue(productConfig.description) !== normalizeValue(existing.description)}`
-          });
           
           if (needsUpdate) {
             const updateDto: UpdateProductDto = {};
             
-            // Only include fields that are explicitly provided in config
             if (productConfig.displayName !== undefined) {
               updateDto.displayName = productConfig.displayName;
             }
@@ -326,61 +306,35 @@ export class ConfigSyncService {
               updateDto.metadata = productConfig.metadata;
             }
             
-            console.log(`[ConfigSync] Updating product with DTO:`, updateDto);
             await this.subscrio.products.updateProduct(productConfig.key, updateDto);
             report.updated.products++;
-            console.log(`[ConfigSync] Product updated, count: ${report.updated.products}`);
           }
           
-          // Handle archive status
           const isArchived = existing.status === 'archived';
-          console.log(`[ConfigSync] Archive check:`, {
-            configArchived: productConfig.archived,
-            isArchived,
-            shouldArchive: productConfig.archived === true && !isArchived,
-            shouldUnarchive: productConfig.archived === false && isArchived
-          });
           if (productConfig.archived === true && !isArchived) {
-            console.log(`[ConfigSync] Archiving product: ${productConfig.key}`);
             await this.subscrio.products.archiveProduct(productConfig.key);
             report.archived.products++;
-            console.log(`[ConfigSync] Product archived, count: ${report.archived.products}`);
           } else if (productConfig.archived === false && isArchived) {
-            console.log(`[ConfigSync] Unarchiving product: ${productConfig.key}`);
             await this.subscrio.products.unarchiveProduct(productConfig.key);
             report.unarchived.products++;
-            console.log(`[ConfigSync] Product unarchived, count: ${report.unarchived.products}`);
           }
         }
 
-        // Sync product-feature associations
         if (productConfig.features) {
           try {
-            console.log(`[ConfigSync] Syncing feature associations for product: ${productConfig.key}`);
             const currentFeatures = await this.subscrio.features.getFeaturesByProduct(productConfig.key);
             const currentFeatureKeys = new Set(currentFeatures.map(f => f.key));
             const configFeatureKeys = new Set(productConfig.features);
-            
-            console.log(`[ConfigSync] Current features:`, Array.from(currentFeatureKeys));
-            console.log(`[ConfigSync] Config features:`, Array.from(configFeatureKeys));
 
-            // Associate features in config but not in database
             for (const featureKey of productConfig.features) {
               if (!currentFeatureKeys.has(featureKey)) {
-                console.log(`[ConfigSync] Associating feature: ${featureKey} to product: ${productConfig.key}`);
                 await this.subscrio.products.associateFeature(productConfig.key, featureKey);
-              } else {
-                console.log(`[ConfigSync] Feature ${featureKey} already associated, skipping`);
               }
             }
 
-            // Dissociate features in database but not in config
             for (const feature of currentFeatures) {
               if (!configFeatureKeys.has(feature.key)) {
-                console.log(`[ConfigSync] Dissociating feature: ${feature.key} from product: ${productConfig.key}`);
                 await this.subscrio.products.dissociateFeature(productConfig.key, feature.key);
-              } else {
-                console.log(`[ConfigSync] Feature ${feature.key} should remain associated, skipping`);
               }
             }
           } catch (error) {
@@ -479,12 +433,13 @@ export class ConfigSyncService {
                 if (transitionBillingCycleExistsInDb) {
                   updateDto.onExpireTransitionToBillingCycleKey = planConfig.onExpireTransitionToBillingCycleKey;
                 } else if (transitionBillingCycleExistsInConfig) {
-                  // Defer setting the transition key until billing cycle is created
                   plansPendingTransitionKey.push({
                     planKey: planConfig.key,
                     transitionKey: planConfig.onExpireTransitionToBillingCycleKey
                   });
                 }
+              } else if (existing.onExpireTransitionToBillingCycleKey) {
+                updateDto.clearOnExpireTransitionToBillingCycleKey = true;
               }
               if (planConfig.metadata !== undefined) {
                 updateDto.metadata = planConfig.metadata;

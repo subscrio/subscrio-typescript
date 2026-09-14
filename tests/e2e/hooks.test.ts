@@ -87,6 +87,23 @@ describe('Hooks E2E Tests', () => {
     off();
   });
 
+  test('before-hook invalid email is rejected and not persisted', async () => {
+    const key = unique('hook-bad-email');
+    const off = subscrio.hooks.on(HookEvents.CustomerCreatedBefore, async (e) => {
+      e.new!.email = 'not-an-email';
+    });
+
+    await expect(
+      subscrio.customers.createCustomer({
+        key,
+        displayName: 'Hook Customer',
+      })
+    ).rejects.toThrow(/after hook|Invalid customer/i);
+
+    expect(await subscrio.customers.getCustomer(key)).toBeNull();
+    off();
+  });
+
   test('after-hook receives non-null entityId on create', async () => {
     let entityId: number | null | undefined;
     const off = subscrio.hooks.on(HookEvents.CustomerCreatedAfter, async (e) => {
@@ -102,6 +119,21 @@ describe('Hooks E2E Tests', () => {
     expect(entityId).toBeTypeOf('number');
     expect(entityId!).toBeGreaterThan(0);
     off();
+  });
+
+  test('unsubscribe via returned off() stops further events', async () => {
+    let count = 0;
+    const off = subscrio.hooks.on(HookEvents.CustomerCreatedAfter, async () => {
+      count++;
+    });
+    off();
+
+    await subscrio.customers.createCustomer({
+      key: unique('hook-unsub'),
+      displayName: 'Unsubscribed',
+    });
+
+    expect(count).toBe(0);
   });
 
   test('after-hook throw leaves the customer row', async () => {

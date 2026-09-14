@@ -11,7 +11,7 @@ export interface ISubscriptionRepository {
   findAll(filters?: SubscriptionFilterDto): Promise<Array<{ subscription: Subscription; customer: Customer | null }>>;
   findByIds(ids: number[]): Promise<Subscription[]>;
   delete(id: number): Promise<void>;
-  exists(id: number): Promise<boolean>;
+
   
   // Find active subscription for customer and plan combination
   findActiveByCustomerAndPlan(customerId: number, planId: number): Promise<Subscription | null>;

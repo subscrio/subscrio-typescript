@@ -7,7 +7,7 @@ export interface IProductRepository {
   findByKey(key: string): Promise<Product | null>;
   findAll(filters?: ProductFilterDto): Promise<Product[]>;
   delete(id: number): Promise<void>;
-  exists(id: number): Promise<boolean>;
+
   
   // Product-Feature associations
   associateFeature(productId: number, featureId: number): Promise<void>;

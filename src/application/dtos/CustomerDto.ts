@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { paginationFields, sortOrderField } from './filterFields.js';
 
 export const CreateCustomerDtoSchema = z.object({
   key: z.string()
@@ -36,9 +37,8 @@ export const CustomerFilterDtoSchema = z.object({
   status: z.enum(['active', 'suspended', 'archived', 'deleted']).optional(),
   search: z.string().optional(),
   sortBy: z.enum(['displayName', 'key', 'createdAt']).optional(),
-  sortOrder: z.enum(['asc', 'desc']).optional(),
-  limit: z.number().int().min(1).max(100).default(50),
-  offset: z.number().int().min(0).default(0)
+  sortOrder: sortOrderField,
+  ...paginationFields
 });
 
 export type CustomerFilterDto = z.infer<typeof CustomerFilterDtoSchema>;

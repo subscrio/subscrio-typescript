@@ -7,6 +7,8 @@ import { FeatureValueResolver } from '../../domain/services/FeatureValueResolver
 import { SubscriptionStatus } from '../../domain/value-objects/SubscriptionStatus.js';
 import { NotFoundError } from '../errors/index.js';
 import { MAX_SUBSCRIPTIONS_PER_CUSTOMER } from '../constants/index.js';
+import { convertFeatureValue } from '../utils/convertFeatureValue.js';
+import type { Subscription } from '../../domain/entities/Subscription.js';
 
 export class FeatureCheckerService {
   private readonly resolver: FeatureValueResolver;
@@ -53,7 +55,7 @@ export class FeatureCheckerService {
 
     // Resolve using hierarchy
     const value = this.resolver.resolve(feature, plan, subscription);
-    return (value as T) ?? defaultValue ?? null;
+    return convertFeatureValue(value, defaultValue);
   }
 
   /**
@@ -163,31 +165,26 @@ export class FeatureCheckerService {
     });
 
     if (productSubscriptions.length === 0) {
-      // No active subscriptions for this product, return feature default
-      return (feature.defaultValue as T) ?? defaultValue ?? null;
+      return convertFeatureValue(feature.defaultValue, defaultValue);
     }
 
-    // Resolve using hierarchy
-    let resolvedValue: string | null = null;
+    let resolvedValue = feature.defaultValue;
 
     for (const subscription of productSubscriptions) {
       const plan = planMap.get(subscription.planId);
       const value = this.resolver.resolve(feature, plan ?? null, subscription);
-      
-      // Feature from repository always has ID (BIGSERIAL PRIMARY KEY)
-      // If this subscription has an override, use it immediately
+
       if (subscription.getFeatureOverride(feature.id!)) {
         resolvedValue = value;
         break;
       }
-      
-      // Otherwise keep checking
-      if (!resolvedValue) {
+
+      if (plan?.getFeatureValue(feature.id!) != null && resolvedValue === feature.defaultValue) {
         resolvedValue = value;
       }
     }
 
-    return (resolvedValue as T) ?? defaultValue ?? null;
+    return convertFeatureValue(resolvedValue, defaultValue);
   }
 
   /**
@@ -280,15 +277,18 @@ export class FeatureCheckerService {
       return false;
     }
 
-    // Entities from repository always have IDs (BIGSERIAL PRIMARY KEY)
+    if (plan.productKey !== productKey) {
+      return false;
+    }
+
     const subscriptions = await this.subscriptionRepository.findByCustomerId(
       customer.id!,
-      { limit: 100, offset: 0 }
+      { limit: MAX_SUBSCRIPTIONS_PER_CUSTOMER, offset: 0 }
     );
 
-    return subscriptions.some(s => 
-      s.planId === plan.id! && 
-      (s.status === SubscriptionStatus.Active || s.status === SubscriptionStatus.Trial)
+    return subscriptions.some(s =>
+      s.planId === plan.id! &&
+      this.isActiveOrTrial(s)
     );
   }
 
@@ -304,14 +304,14 @@ export class FeatureCheckerService {
     // Customer from repository always has ID (BIGSERIAL PRIMARY KEY)
     const subscriptions = await this.subscriptionRepository.findByCustomerId(
       customer.id!,
-      { limit: 100, offset: 0 }
+      { limit: MAX_SUBSCRIPTIONS_PER_CUSTOMER, offset: 0 }
     );
 
-    // Batch load all plans to avoid N+1 queries
-    const planIds = subscriptions.map(s => s.planId);
+    const activeSubscriptions = subscriptions.filter((s) => this.isActiveOrTrial(s));
+    const planIds = [...new Set(activeSubscriptions.map(s => s.planId))];
     const plans = await this.planRepository.findByIds(planIds);
-    
-    return plans.map(plan => plan.key);
+
+    return [...new Set(plans.map(plan => plan.key))];
   }
 
   /**
@@ -328,20 +328,31 @@ export class FeatureCheckerService {
     textFeatures: Map<string, string>;
   }> {
     const customer = await this.customerRepository.findByKey(customerKey);
-    // Customer from repository always has ID (BIGSERIAL PRIMARY KEY)
-    const activeSubscriptions = customer
-      ? (await this.subscriptionRepository.findByCustomerId(customer.id!, { limit: 100, offset: 0 })).length
-      : 0;
+    const product = await this.productRepository.findByKey(productKey);
+
+    let activeSubscriptions = 0;
+    if (customer && product) {
+      const subscriptions = await this.subscriptionRepository.findByCustomerId(
+        customer.id!,
+        { limit: MAX_SUBSCRIPTIONS_PER_CUSTOMER, offset: 0 }
+      );
+      const planIds = [...new Set(subscriptions.map(s => s.planId))];
+      const plans = await this.planRepository.findByIds(planIds);
+      const productPlanIds = new Set(
+        plans.filter(p => p.productKey === productKey).map(p => p.id!)
+      );
+      activeSubscriptions = subscriptions.filter(s =>
+        productPlanIds.has(s.planId) && this.isActiveOrTrial(s)
+      ).length;
+    }
 
     const allFeatures = await this.getAllFeaturesForCustomer(customerKey, productKey);
-    
+
     const enabledFeatures: string[] = [];
     const disabledFeatures: string[] = [];
     const numericFeatures = new Map<string, number>();
     const textFeatures = new Map<string, string>();
 
-    // Get all features to determine their types
-    const product = await this.productRepository.findByKey(productKey);
     if (!product) {
       return {
         activeSubscriptions,
@@ -352,7 +363,6 @@ export class FeatureCheckerService {
       };
     }
 
-    // Product from repository always has ID (BIGSERIAL PRIMARY KEY)
     const features = await this.featureRepository.findByProduct(product.id!);
     const featureTypeMap = new Map(features.map(f => [f.key, f.valueType]));
 
@@ -386,6 +396,12 @@ export class FeatureCheckerService {
       numericFeatures,
       textFeatures
     };
+  }
+
+  private isActiveOrTrial(subscription: Subscription): boolean {
+    const status = String(subscription.status).toLowerCase();
+    return status === SubscriptionStatus.Active || status === SubscriptionStatus.Trial
+      || status === 'active' || status === 'trial';
   }
 
 }

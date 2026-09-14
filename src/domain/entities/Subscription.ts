@@ -1,8 +1,8 @@
 import { Entity } from '../base/Entity.js';
 import { SubscriptionStatus } from '../value-objects/SubscriptionStatus.js';
 import { OverrideType } from '../value-objects/OverrideType.js';
-import { DomainError } from '../../application/errors/index.js';
-import { now } from '../../infrastructure/utils/date.js';
+import { DomainError } from '../errors/DomainError.js';
+import { now } from '../clock.js';
 
 export interface FeatureOverride {
   featureId: number;

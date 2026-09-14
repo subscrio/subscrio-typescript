@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { paginationFields, sortOrderField } from './filterFields.js';
 
 export const CreateBillingCycleObjectSchema = z.object({
   planKey: z.string()
@@ -79,12 +80,11 @@ export interface BillingCycleDto {
 export const BillingCycleFilterDtoSchema = z.object({
   planKey: z.string().optional(),
   status: z.enum(['active', 'archived']).optional(),
-  limit: z.number().int().min(1).max(100).default(50),
-  offset: z.number().int().min(0).default(0),
+  ...paginationFields,
   durationUnit: z.enum(['days', 'weeks', 'months', 'years', 'forever']).optional(),
   search: z.string().optional(),
   sortBy: z.enum(['displayName', 'createdAt']).optional(),
-  sortOrder: z.enum(['asc', 'desc']).optional()
+  sortOrder: sortOrderField
 });
 
 export type BillingCycleFilterDto = z.infer<typeof BillingCycleFilterDtoSchema>;

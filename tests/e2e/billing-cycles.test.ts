@@ -452,5 +452,27 @@ describe('Billing Cycles E2E Tests', () => {
       ).rejects.toThrow('referenced by plan transition settings');
     });
   });
+
+  test('getDefaultBillingCycles returns matching monthly/quarterly/yearly keys', async () => {
+    await subscrio.billingCycles.createBillingCycle({
+      planKey: testPlan.key,
+      key: 'monthly',
+      displayName: 'Default Monthly',
+      durationValue: 1,
+      durationUnit: 'months'
+    });
+    await subscrio.billingCycles.createBillingCycle({
+      planKey: testPlan.key,
+      key: 'yearly',
+      displayName: 'Default Yearly',
+      durationValue: 1,
+      durationUnit: 'years'
+    });
+
+    const defaults = await subscrio.billingCycles.getDefaultBillingCycles();
+    const keys = defaults.map((c) => c.key);
+    expect(keys).toContain('monthly');
+    expect(keys).toContain('yearly');
+  });
 });
 

@@ -8,6 +8,5 @@ export interface ICustomerRepository {
   findByExternalBillingId(externalBillingId: string): Promise<Customer | null>;
   findAll(filters?: CustomerFilterDto): Promise<Customer[]>;
   delete(id: number): Promise<void>;
-  exists(id: number): Promise<boolean>;
 }
 

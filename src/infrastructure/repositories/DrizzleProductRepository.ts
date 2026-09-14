@@ -1,4 +1,4 @@
-import { eq, and, ilike, or } from 'drizzle-orm';
+import { eq, and, ilike, or, desc } from 'drizzle-orm';
 import { DrizzleDb } from '../database/drizzle.js';
 import { products, product_features, plans } from '../database/schema.js';
 import { IProductRepository } from '../../application/repositories/IProductRepository.js';
@@ -6,6 +6,7 @@ import { Product } from '../../domain/entities/Product.js';
 import { ProductMapper } from '../../application/mappers/ProductMapper.js';
 import { ProductFilterDto } from '../../application/dtos/ProductDto.js';
 import { now } from '../utils/date.js';
+import { applyPaging } from './applyPaging.js';
 
 export class DrizzleProductRepository implements IProductRepository {
   constructor(private readonly db: DrizzleDb) {}
@@ -77,13 +78,8 @@ export class DrizzleProductRepository implements IProductRepository {
       ) as any;
     }
 
-    if (filters?.limit) {
-      query = query.limit(filters.limit) as any;
-    }
-
-    if (filters?.offset) {
-      query = query.offset(filters.offset) as any;
-    }
+    query = query.orderBy(desc(products.created_at)) as any;
+    query = applyPaging(query, filters?.offset, filters?.limit);
 
     const records = await query;
     return records.map(ProductMapper.toDomain);
@@ -91,16 +87,6 @@ export class DrizzleProductRepository implements IProductRepository {
 
   async delete(id: number): Promise<void> {
     await this.db.delete(products).where(eq(products.id, id));
-  }
-
-  async exists(id: number): Promise<boolean> {
-    const [record] = await this.db
-      .select({ id: products.id })
-      .from(products)
-      .where(eq(products.id, id))
-      .limit(1);
-
-    return !!record;
   }
 
   async associateFeature(productId: number, featureId: number): Promise<void> {

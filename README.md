@@ -35,8 +35,9 @@ See the [Subscrio hub README](https://github.com/subscrio/subscrio) for concepts
 - Plans and billing cycles: model packages and subscription timing without processing payments
 - Subscription lifecycle: trials, renewals, cancellations, and effective access dates
 - Stripe integration: process supported, verified Stripe subscription events
-- PostgreSQL: Drizzle ORM with a published type-safe npm package
+- PostgreSQL: Drizzle ORM with a published type-safe npm package. Schema install/drop/migrate SQL is also generated for SQL Server; the TypeScript query runtime is PostgreSQL.
 - Hooks: before/after events for customers, subscriptions, and inbound Stripe payloads
+- Config sync: file or JSON catalog sync for products, features, plans, and billing cycles
 
 ## Installation
 
@@ -125,7 +126,8 @@ Public APIs use string **keys**, not internal IDs. DTOs and types are exported f
 | `DATABASE_SSL` | No | `true` to enable SSL |
 | `DATABASE_POOL_SIZE` | No | Connection pool size (default: driver preset) |
 | `STRIPE_SECRET_KEY` | No | Stripe secret key for billing helpers |
-| `ADMIN_PASSPHRASE` | No | Default admin passphrase for schema install |
+| `STRIPE_WEBHOOK_SECRET` | No | Stripe webhook endpoint secret (`whsec_...`) for `constructStripeEvent` |
+| `ADMIN_PASSPHRASE` | No | Default admin passphrase for schema install and drop |
 | `LOG_LEVEL` | No | `debug`, `info`, `warn`, or `error` |
 
 **Connection string example:** `postgresql://postgres:password@localhost:5432/subscrio`
@@ -150,25 +152,24 @@ if (version == null) {
 await subscrio.migrate();
 ```
 
-Other instance methods: `dropSchema()` (destructive; tests/dev only), `runInitialConfigSync()` (when `SubscrioConfig.initialConfig` is set), and `close()`.
+Other instance methods: `dropSchema(adminPassphrase)` (destructive; tests/dev only — the passphrase is required when a hash was stored at install), `runInitialConfigSync()` (when `SubscrioConfig.initialConfig` is set), and `close()`.
 
 ## Stripe
 
 Stripe support is optional. You only need it if you want Subscrio to apply verified Stripe subscription events to local customers and subscriptions. You can create and manage subscriptions through the API without Stripe.
 
-Subscrio does **not** verify webhook signatures. Verify events in your app, then pass them to `processStripeEvent`.
-
-Creating a Stripe subscription requires the customer to have `externalBillingId` set (Stripe customer ID):
+Subscrio does **not** charge cards. Verify webhook signatures in your app (or via `constructStripeEvent` when `stripe.webhookSecret` is set), then pass events to `processStripeEvent`. Create subscriptions through Checkout or your own Stripe API calls, not a placeholder create helper.
 
 ```typescript
+const event = subscrio.stripe.constructStripeEvent(rawBody, signatureHeader);
 await subscrio.stripe.processStripeEvent(event);
 
-await subscrio.stripe.createStripeSubscription(
-  customer.key,
-  plan.key,
-  billingCycle.key,
-  'price_123'
-);
+const { url } = await subscrio.stripe.createCheckoutSession({
+  customerKey: customer.key,
+  billingCycleKey: billingCycle.key,
+  successUrl: 'https://example.com/success',
+  cancelUrl: 'https://example.com/cancel'
+});
 ```
 
 See [Stripe integration](https://docs.subscrio.com/reference/stripe-integration) and the [hub overview](https://github.com/subscrio/subscrio#stripe-integration).
@@ -184,7 +185,7 @@ Full API reference, hooks, and extension guides live on [docs.subscrio.com](http
 
 **Services on `Subscrio`:** `products`, `features`, `plans`, `billingCycles`, `customers`, `subscriptions`, `featureChecker`, `stripe`, `configSync`, `hooks`.
 
-Handle `ValidationError`, `NotFoundError`, and `ConflictError` from `subscrio`.
+Handle `ValidationError`, `NotFoundError`, `ConflictError`, `DomainError`, and `ConfigurationError` from `subscrio`.
 
 ## Building and testing
 
@@ -205,7 +206,7 @@ MIT. See [LICENSE](LICENSE).
 
 ## Contributing
 
-Issues and pull requests welcome in this repo. Org-wide guidelines: [CONTRIBUTING](https://github.com/subscrio/subscrio/blob/main/CONTRIBUTING.md).
+Issues and pull requests welcome in this repo. See [CONTRIBUTING.md](CONTRIBUTING.md). Org-wide guidelines: [CONTRIBUTING](https://github.com/subscrio/subscrio/blob/main/CONTRIBUTING.md).
 
 ## Support
 

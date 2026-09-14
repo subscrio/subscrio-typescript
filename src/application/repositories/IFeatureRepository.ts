@@ -8,7 +8,7 @@ export interface IFeatureRepository {
   findAll(filters?: FeatureFilterDto): Promise<Feature[]>;
   findByIds(ids: number[]): Promise<Feature[]>;
   delete(id: number): Promise<void>;
-  exists(id: number): Promise<boolean>;
+
   
   // Get features by product
   findByProduct(productId: number): Promise<Feature[]>;

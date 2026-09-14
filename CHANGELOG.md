@@ -1,3 +1,54 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+### Hygiene
+
+- Key format rules remain intentionally per-entity (product/plan: lowercase-hyphen; feature/subscription: upper/underscore allowed) pending a public API decision
+- TypeScript query runtime remains PostgreSQL via Drizzle; SQL Server dialect SQL is generated for schema install/view/drop, and live SQL Server schema smoke is covered
+- Unused repository `exists` helpers removed (same intent as .NET ExistsAsync removal)
+- Application services still use Drizzle-backed repository implementations internally (ORM types remain on the package surface until a major version)
+- Live Stripe Checkout and real webhook-secret round-trips remain credential-bound
+- Multi-Node CI matrix is not added
+
+## [0.3.1] - 2026-09-11
+
+### Added
+
+- `clearTrialEndDate` on subscription updates so omitted trial dates no longer clear trials
+- `clearOnExpireTransitionToBillingCycleKey` on plan updates and ConfigSync
+- `constructStripeEvent` webhook signature helper
+- Feature overrides on subscription DTOs
+- Dual-dialect schema SQL (PostgreSQL + SQL Server) for install, view, migrate, and drop
+- Admin passphrase enforcement on destructive schema drop
+- OSS files: SECURITY, CONTRIBUTING, CODE_OF_CONDUCT, .editorconfig
+
+### Changed
+
+- ConfigSync pages all entities instead of the first 100
+- FeatureChecker multi-subscription resolution no longer locks onto the first plan default
+- `getActivePlans` and usage summary count only active/trial (product-scoped for usage)
+- `hasPlanAccess` requires the plan to belong to the given product
+- Typed feature values convert from stored strings using the provided default's type
+- List queries apply order then offset then limit
+- Expire transitions create the replacement subscription before archiving
+- Stripe unknown statuses fail closed
+- `createStripeSubscription` is not a real Stripe create API
+
+### Fixed
+
+- Feature `valueType` is persisted on update
+- Plan feature values require product association
+- Toggle create validation is case-insensitive
+- Schema verify rethrows unexpected errors instead of treating them as "not installed"
+- SSL=true requires TLS with certificate verification
+- Hooks re-validate customer and subscription DTOs after before-hook mutations
+
 ## [0.3.0] - 2026-08-19
 
 ### Changed

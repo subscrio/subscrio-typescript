@@ -18,7 +18,6 @@ import { dirname, resolve } from 'path';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-// Load .env from packages/core if it exists
 dotenv.config({ path: resolve(__dirname, '../.env') });
 
 async function main() {

@@ -1,5 +1,5 @@
 import { Entity } from '../base/Entity.js';
-import { now } from '../../infrastructure/utils/date.js';
+import { now } from '../clock.js';
 
 export interface SystemConfigProps {
   configKey: string;

@@ -498,5 +498,31 @@ describe('Features E2E Tests', () => {
       ).rejects.toThrow('not found');
     });
   });
+
+  describe('Value type updates and toggle case', () => {
+    test('accepts case-insensitive toggle defaults', async () => {
+      const feature = await subscrio.features.createFeature({
+        key: `toggle-case-${Date.now()}`,
+        displayName: 'Toggle Case',
+        valueType: 'toggle',
+        defaultValue: 'TRUE'
+      });
+      expect(feature.defaultValue.toLowerCase()).toBe('true');
+    });
+
+    test('persists valueType on update', async () => {
+      const feature = await subscrio.features.createFeature({
+        key: `value-type-update-${Date.now()}`,
+        displayName: 'Type Change',
+        valueType: 'text',
+        defaultValue: '10'
+      });
+      const updated = await subscrio.features.updateFeature(feature.key, {
+        valueType: 'numeric',
+        defaultValue: '10'
+      });
+      expect(updated.valueType).toBe('numeric');
+    });
+  });
 });
 

@@ -703,6 +703,53 @@ describe('Plans E2E Tests', () => {
         subscrio.plans.setFeatureValue('non-existent-plan', feature.key, '50')
       ).rejects.toThrow('not found');
     });
+
+    test('requires the feature to be associated with the plan product', async () => {
+      const product = await subscrio.products.createProduct({
+        key: `assoc-plan-product-${Date.now()}`,
+        displayName: 'Assoc Product'
+      });
+      const feature = await subscrio.features.createFeature({
+        key: `assoc-plan-feature-${Date.now()}`,
+        displayName: 'Unassociated',
+        valueType: 'numeric',
+        defaultValue: '1'
+      });
+      const plan = await subscrio.plans.createPlan({
+        productKey: product.key,
+        key: `assoc-plan-${Date.now()}`,
+        displayName: 'Assoc Plan'
+      });
+      await expect(
+        subscrio.plans.setFeatureValue(plan.key, feature.key, '5')
+      ).rejects.toThrow(/not associated/);
+    });
+
+    test('clears on-expire transition with the explicit flag', async () => {
+      const product = await subscrio.products.createProduct({
+        key: `clear-trans-product-${Date.now()}`,
+        displayName: 'Clear Product'
+      });
+      const plan = await subscrio.plans.createPlan({
+        productKey: product.key,
+        key: `clear-trans-plan-${Date.now()}`,
+        displayName: 'Clear Plan'
+      });
+      const cycle = await subscrio.billingCycles.createBillingCycle({
+        planKey: plan.key,
+        key: `clear-trans-cycle-${Date.now()}`,
+        displayName: 'Cycle',
+        durationValue: 1,
+        durationUnit: 'months'
+      });
+      await subscrio.plans.updatePlan(plan.key, {
+        onExpireTransitionToBillingCycleKey: cycle.key
+      });
+      const cleared = await subscrio.plans.updatePlan(plan.key, {
+        clearOnExpireTransitionToBillingCycleKey: true
+      });
+      expect(cleared.onExpireTransitionToBillingCycleKey).toBeNull();
+    });
   });
 });
 

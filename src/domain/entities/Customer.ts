@@ -1,6 +1,6 @@
 import { Entity } from '../base/Entity.js';
 import { CustomerStatus } from '../value-objects/CustomerStatus.js';
-import { now } from '../../infrastructure/utils/date.js';
+import { now } from '../clock.js';
 
 export interface CustomerProps {
   key: string;

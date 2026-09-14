@@ -1,12 +1,4 @@
-/**
- * Domain business rule violation
- */
-export class DomainError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'DomainError';
-  }
-}
+export { DomainError } from '../../domain/errors/DomainError.js';
 
 /**
  * Input validation error (Zod validation failures)

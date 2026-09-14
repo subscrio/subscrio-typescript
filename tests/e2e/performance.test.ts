@@ -25,7 +25,7 @@ describe('Performance Tests', () => {
 
     sharedBillingCycle = await subscrio.billingCycles.createBillingCycle({
       planKey: plan.key,
-      key: 'monthly',
+      key: 'performance-monthly',
       displayName: 'Monthly',
       durationValue: 1,
       durationUnit: 'months'

@@ -1,8 +1,8 @@
 import { Entity } from '../base/Entity.js';
 import { ProductStatus } from '../value-objects/ProductStatus.js';
-import { DomainError } from '../../application/errors/index.js';
-import { MAX_DISPLAY_NAME_LENGTH, MIN_DISPLAY_NAME_LENGTH } from '../../application/constants/index.js';
-import { now } from '../../infrastructure/utils/date.js';
+import { DomainError } from '../errors/DomainError.js';
+import { MAX_DISPLAY_NAME_LENGTH, MIN_DISPLAY_NAME_LENGTH } from '../constants.js';
+import { now } from '../clock.js';
 
 export interface ProductProps {
   key: string;

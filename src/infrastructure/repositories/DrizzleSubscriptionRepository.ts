@@ -7,7 +7,8 @@ import { DrizzleDb } from '../database/drizzle.js';
 import { subscriptions, subscription_feature_overrides, subscriptionStatusView, plans, customers } from '../database/schema.js';
 import { eq, and, desc, asc, inArray, gte, lte, isNotNull, isNull } from 'drizzle-orm';
 import { SubscriptionFilterDto } from '../../application/dtos/SubscriptionDto.js';
-import { OverrideType } from '../../domain/value-objects/OverrideType.js';
+import { applyPaging } from './applyPaging.js';
+import { FeatureValueMapper } from '../../application/mappers/FeatureValueMapper.js';
 
 export class DrizzleSubscriptionRepository implements ISubscriptionRepository {
   constructor(private readonly db: DrizzleDb) {}
@@ -109,12 +110,7 @@ export class DrizzleSubscriptionRepository implements ISubscriptionRepository {
       .from(subscription_feature_overrides)
       .where(eq(subscription_feature_overrides.subscription_id, subscriptionId));
 
-    return records.map(r => ({
-      featureId: r.feature_id as number,
-      value: r.value,
-      type: r.override_type as OverrideType,
-      createdAt: new Date(r.created_at)
-    }));
+    return FeatureValueMapper.toFeatureOverrides(records);
   }
 
   async findById(id: number): Promise<Subscription | null> {
@@ -299,13 +295,7 @@ export class DrizzleSubscriptionRepository implements ISubscriptionRepository {
         query = query.orderBy(sortOrder === 'desc' ? desc(subscriptionStatusView.created_at) : asc(subscriptionStatusView.created_at)) as typeof query;
       }
 
-      // Apply pagination
-      if (filters.limit) {
-        query = query.limit(filters.limit) as typeof query;
-      }
-      if (filters.offset) {
-        query = query.offset(filters.offset) as typeof query;
-      }
+      query = applyPaging(query, filters.offset, filters.limit) as typeof query;
     } else {
       query = query.orderBy(desc(subscriptionStatusView.created_at)) as typeof query;
     }
@@ -368,11 +358,15 @@ export class DrizzleSubscriptionRepository implements ISubscriptionRepository {
       conditions.push(eq(subscriptionStatusView.computed_status, filters.status));
     }
 
-    const records = await this.db
+    let query = this.db
       .select()
       .from(subscriptionStatusView)
       .where(and(...conditions))
       .orderBy(desc(subscriptionStatusView.created_at));
+
+    query = applyPaging(query as any, filters?.offset, filters?.limit) as typeof query;
+
+    const records = await query;
 
     const subscriptionsWithOverrides = [];
     for (const record of records) {
@@ -419,16 +413,6 @@ export class DrizzleSubscriptionRepository implements ISubscriptionRepository {
       return SubscriptionMapper.toDomain(record, featureOverrides);
     }
     return null;
-  }
-
-  async exists(id: number): Promise<boolean> {
-    const [record] = await this.db
-      .select({ id: subscriptions.id })
-      .from(subscriptions)
-      .where(eq(subscriptions.id, id))
-      .limit(1);
-    
-    return !!record;
   }
 
   async hasSubscriptionsForPlan(planId: number): Promise<boolean> {
@@ -483,8 +467,8 @@ export class DrizzleSubscriptionRepository implements ISubscriptionRepository {
           isNotNull(plans.on_expire_transition_to_billing_cycle_id)
         )
       )
-      .limit(limit)
-      .orderBy(desc(subscriptionStatusView.expiration_date));
+      .orderBy(desc(subscriptionStatusView.expiration_date))
+      .limit(limit);
 
     const subscriptionsWithOverrides = [];
     for (const record of records) {

@@ -31,6 +31,7 @@ import { HookDispatcher } from '../hooks/HookDispatcher.js';
 import { HookEvents, type HookSource, type SubscriptionMutationHookEvent } from '../hooks/types.js';
 import { cloneJson } from '../hooks/cloneJson.js';
 import { applySubscriptionDtoMutation } from '../hooks/applySubscriptionDtoMutation.js';
+import { compactDefined, revalidateAfterHook } from '../utils/ValidationGuard.js';
 
 /**
  * Transition report for expired subscription processing
@@ -114,13 +115,31 @@ export class SubscriptionManagementService {
 
   private async toSubscriptionDto(subscription: Subscription): Promise<SubscriptionDto> {
     const keys = await this.resolveSubscriptionKeys(subscription);
+    const featureOverrides = await this.toFeatureOverrideDtos(subscription);
     return SubscriptionMapper.toDto(
       subscription,
       keys.customerKey,
       keys.productKey,
       keys.planKey,
-      keys.billingCycleKey
+      keys.billingCycleKey,
+      undefined,
+      featureOverrides
     );
+  }
+
+  private async toFeatureOverrideDtos(subscription: Subscription): Promise<import('../dtos/SubscriptionDto.js').FeatureOverrideDto[]> {
+    const overrides = [];
+    for (const override of subscription.props.featureOverrides) {
+      const feature = await this.featureRepository.findById(override.featureId);
+      if (!feature) continue;
+      overrides.push({
+        featureKey: feature.key,
+        value: override.value,
+        type: override.type,
+        createdAt: override.createdAt.toISOString(),
+      });
+    }
+    return overrides;
   }
 
   private async resolveSubscriptionKeys(subscription: Subscription): Promise<{
@@ -267,6 +286,23 @@ export class SubscriptionManagementService {
         proposed
       );
       proposed = before.newDto ?? proposed;
+      revalidateAfterHook(
+        CreateSubscriptionDtoSchema,
+        compactDefined({
+          key: proposed.key,
+          customerKey: proposed.customerKey,
+          billingCycleKey: proposed.billingCycleKey,
+          activationDate: proposed.activationDate,
+          expirationDate: proposed.expirationDate,
+          cancellationDate: proposed.cancellationDate,
+          trialEndDate: proposed.trialEndDate,
+          currentPeriodStart: proposed.currentPeriodStart,
+          currentPeriodEnd: proposed.currentPeriodEnd,
+          stripeSubscriptionId: proposed.stripeSubscriptionId,
+          metadata: proposed.metadata,
+        }),
+        'subscription data'
+      );
       applySubscriptionDtoMutation(subscription, proposed, { allowKeyChange: true });
 
       if (subscription.key !== validatedDto.key) {
@@ -286,7 +322,9 @@ export class SubscriptionManagementService {
       keys.customerKey,
       keys.productKey,
       keys.planKey,
-      keys.billingCycleKey
+      keys.billingCycleKey,
+      undefined,
+      await this.toFeatureOverrideDtos(savedSubscription)
     );
     await this.emitSubscriptionAfter(
       HookEvents.SubscriptionCreatedAfter,
@@ -308,9 +346,6 @@ export class SubscriptionManagementService {
     }
     const validatedDto = validationResult.data;
     
-    // Check if trialEndDate was explicitly set to null/undefined in original input
-    const wasTrialEndDateCleared = dto.trialEndDate === null || dto.trialEndDate === undefined;
-
     const subscription = await this.subscriptionRepository.findByKey(subscriptionKey);
     if (!subscription) {
       throw new NotFoundError(`Subscription with key '${subscriptionKey}' not found`);
@@ -333,10 +368,12 @@ export class SubscriptionManagementService {
     if (validatedDto.cancellationDate !== undefined) {
       subscription.props.cancellationDate = validatedDto.cancellationDate ? new Date(validatedDto.cancellationDate) : undefined;
     }
-    // Handle trialEndDate updates
-    if (validatedDto.trialEndDate !== undefined || wasTrialEndDateCleared) {
-      const newTrialEndDate = validatedDto.trialEndDate ? new Date(validatedDto.trialEndDate) : undefined;
-      subscription.props.trialEndDate = newTrialEndDate;
+    if (validatedDto.clearTrialEndDate) {
+      subscription.props.trialEndDate = undefined;
+    } else if (validatedDto.trialEndDate !== undefined) {
+      subscription.props.trialEndDate = validatedDto.trialEndDate
+        ? new Date(validatedDto.trialEndDate)
+        : undefined;
     }
     if (validatedDto.currentPeriodStart !== undefined) {
       subscription.props.currentPeriodStart = validatedDto.currentPeriodStart ? new Date(validatedDto.currentPeriodStart) : undefined;
@@ -373,12 +410,34 @@ export class SubscriptionManagementService {
       proposed
     );
     proposed = before.newDto ?? proposed;
+    revalidateAfterHook(
+      UpdateSubscriptionDtoSchema,
+      compactDefined({
+        billingCycleKey: proposed.billingCycleKey,
+        expirationDate: proposed.expirationDate,
+        cancellationDate: proposed.cancellationDate,
+        trialEndDate: proposed.trialEndDate,
+        currentPeriodStart: proposed.currentPeriodStart,
+        currentPeriodEnd: proposed.currentPeriodEnd,
+        stripeSubscriptionId: proposed.stripeSubscriptionId,
+        metadata: proposed.metadata,
+      }),
+      'subscription update'
+    );
     applySubscriptionDtoMutation(subscription, proposed, { allowKeyChange: false });
 
     const updatedSubscription = await this.subscriptionRepository.save(subscription);
     
     const keys = await this.resolveSubscriptionKeys(updatedSubscription);
-    const savedDto = SubscriptionMapper.toDto(updatedSubscription, keys.customerKey, keys.productKey, keys.planKey, keys.billingCycleKey);
+    const savedDto = SubscriptionMapper.toDto(
+      updatedSubscription,
+      keys.customerKey,
+      keys.productKey,
+      keys.planKey,
+      keys.billingCycleKey,
+      undefined,
+      await this.toFeatureOverrideDtos(updatedSubscription)
+    );
     await this.emitSubscriptionAfter(
       HookEvents.SubscriptionUpdatedAfter,
       'api',
@@ -394,7 +453,15 @@ export class SubscriptionManagementService {
     if (!subscription) return null;
     
     const keys = await this.resolveSubscriptionKeys(subscription);
-    return SubscriptionMapper.toDto(subscription, keys.customerKey, keys.productKey, keys.planKey, keys.billingCycleKey);
+    return SubscriptionMapper.toDto(
+      subscription,
+      keys.customerKey,
+      keys.productKey,
+      keys.planKey,
+      keys.billingCycleKey,
+      undefined,
+      await this.toFeatureOverrideDtos(subscription)
+    );
   }
 
 
@@ -531,26 +598,32 @@ export class SubscriptionManagementService {
       return [];
     }
 
-    // Merge resolved IDs with other filter properties (sortBy, sortOrder, limit, offset, status, isArchived)
+    const validated = validationResult.data;
     const dbFilters: any = {
       ...resolvedFilters,
-      sortBy: filters?.sortBy,
-      sortOrder: filters?.sortOrder,
-      limit: filters?.limit,
-      offset: filters?.offset,
-      status: filters?.status,
-      isArchived: filters?.isArchived
+      sortBy: validated.sortBy,
+      sortOrder: validated.sortOrder,
+      limit: validated.limit,
+      offset: validated.offset,
+      status: validated.status,
+      isArchived: validated.isArchived
     };
 
-    // Query repository with IDs - filtering happens in SQL, returns subscription + customer
     const results = await this.subscriptionRepository.findAll(dbFilters);
 
     // Map to DTOs
     const dtos: SubscriptionDto[] = [];
     for (const { subscription, customer } of results) {
-      // Get keys for plan, product, billing cycle (customer is already available from join)
       const keys = await this.resolveSubscriptionKeys(subscription);
-      dtos.push(SubscriptionMapper.toDto(subscription, keys.customerKey, keys.productKey, keys.planKey, keys.billingCycleKey, customer));
+      dtos.push(SubscriptionMapper.toDto(
+        subscription,
+        keys.customerKey,
+        keys.productKey,
+        keys.planKey,
+        keys.billingCycleKey,
+        customer,
+        await this.toFeatureOverrideDtos(subscription)
+      ));
     }
     return dtos;
   }
@@ -573,21 +646,19 @@ export class SubscriptionManagementService {
       return [];
     }
 
-    // Merge resolved IDs with other filter properties (sortBy, sortOrder, limit, offset, status, isArchived)
+    const validated = validationResult.data;
     const dbFilters: any = {
       ...resolvedFilters,
-      sortBy: filters.sortBy,
-      sortOrder: filters.sortOrder,
-      limit: filters.limit,
-      offset: filters.offset,
-      status: filters.status,
-      isArchived: filters.isArchived
+      sortBy: validated.sortBy,
+      sortOrder: validated.sortOrder,
+      limit: validated.limit,
+      offset: validated.offset,
+      status: validated.status,
+      isArchived: validated.isArchived
     };
 
-    // Query repository with IDs - filtering happens in SQL, returns subscription + customer
     const results = await this.subscriptionRepository.findAll(dbFilters);
 
-    // Filter by hasFeatureOverrides (unavoidable post-fetch since it requires loading feature overrides)
     let filteredResults = results;
     if (filters.hasFeatureOverrides !== undefined) {
       const hasOverrides = filters.hasFeatureOverrides;
@@ -599,9 +670,16 @@ export class SubscriptionManagementService {
     // Map to DTOs
     const dtos: SubscriptionDto[] = [];
     for (const { subscription, customer } of filteredResults) {
-      // Get keys for plan, product, billing cycle (customer is already available from join)
       const keys = await this.resolveSubscriptionKeys(subscription);
-      dtos.push(SubscriptionMapper.toDto(subscription, keys.customerKey, keys.productKey, keys.planKey, keys.billingCycleKey, customer));
+      dtos.push(SubscriptionMapper.toDto(
+        subscription,
+        keys.customerKey,
+        keys.productKey,
+        keys.planKey,
+        keys.billingCycleKey,
+        customer,
+        await this.toFeatureOverrideDtos(subscription)
+      ));
     }
     return dtos;
   }
@@ -618,7 +696,15 @@ export class SubscriptionManagementService {
     const dtos: SubscriptionDto[] = [];
     for (const subscription of subscriptions) {
       const keys = await this.resolveSubscriptionKeys(subscription);
-      dtos.push(SubscriptionMapper.toDto(subscription, keys.customerKey, keys.productKey, keys.planKey, keys.billingCycleKey));
+      dtos.push(SubscriptionMapper.toDto(
+        subscription,
+        keys.customerKey,
+        keys.productKey,
+        keys.planKey,
+        keys.billingCycleKey,
+        undefined,
+        await this.toFeatureOverrideDtos(subscription)
+      ));
     }
     return dtos;
   }
@@ -911,8 +997,8 @@ export class SubscriptionManagementService {
    * This method:
    * 1. Finds all expired subscriptions (status='expired', not archived) whose plan has a transition requirement
    * 2. For each expired subscription:
-   *    - Archives the old subscription
-   *    - Creates a new subscription to the transition billing cycle
+   *    - Creates a new subscription to the transition billing cycle first
+   *    - Archives the old subscription after the replacement is persisted
    *    - New subscription key is versioned: original key + "-vX" (or increments if already versioned)
    * 
    * Note: Plans do not have grace periods. A subscription is expired when
@@ -977,37 +1063,7 @@ export class SubscriptionManagementService {
           continue;
         }
 
-        // Mark subscription as transitioned (archives it and sets transitioned_at)
-        const oldArchivedDto = await this.toSubscriptionDto(expiredSubscription);
-        let archivedProposed: SubscriptionDto = {
-          ...oldArchivedDto,
-          isArchived: true,
-          updatedAt: now().toISOString(),
-        };
-        const archiveBefore = await this.emitSubscriptionBefore(
-          HookEvents.SubscriptionArchivedBefore,
-          'system',
-          expiredSubscription,
-          oldArchivedDto,
-          archivedProposed
-        );
-        archivedProposed = archiveBefore.newDto ?? archivedProposed;
-        applySubscriptionDtoMutation(expiredSubscription, archivedProposed, { allowKeyChange: false });
-        expiredSubscription.markAsTransitioned();
-        const archivedSaved = await this.subscriptionRepository.save(expiredSubscription);
-        await this.emitSubscriptionAfter(
-          HookEvents.SubscriptionArchivedAfter,
-          'system',
-          archivedSaved,
-          oldArchivedDto,
-          await this.toSubscriptionDto(archivedSaved)
-        );
-        report.archived++;
-
-        // Generate versioned key for new subscription
         const newSubscriptionKey = this.generateVersionedKey(expiredSubscription.key);
-        
-        // Check if key already exists (shouldn't happen, but be safe)
         const existing = await this.subscriptionRepository.findByKey(newSubscriptionKey);
         if (existing) {
           report.errors.push({
@@ -1017,7 +1073,6 @@ export class SubscriptionManagementService {
           continue;
         }
 
-        // Create new subscription to transition billing cycle
         const currentPeriodStart = now();
         const currentPeriodEnd = this.calculatePeriodEnd(
           currentPeriodStart,
@@ -1041,14 +1096,14 @@ export class SubscriptionManagementService {
           status: SubscriptionStatus.Active,
           isArchived: false,
           activationDate: currentPeriodStart,
-          expirationDate: undefined, // New subscription doesn't expire unless set
+          expirationDate: undefined,
           cancellationDate: undefined,
           trialEndDate: undefined,
           currentPeriodStart,
           currentPeriodEnd,
-          stripeSubscriptionId: undefined, // New subscription doesn't have Stripe ID (old archived subscription keeps its Stripe ID)
-          featureOverrides: [], // Overrides don't carry over to new subscription
-          metadata: expiredSubscription.props.metadata, // Carry over metadata
+          stripeSubscriptionId: undefined,
+          featureOverrides: [],
+          metadata: expiredSubscription.props.metadata,
           createdAt: now(),
           updatedAt: now()
         });
@@ -1079,6 +1134,32 @@ export class SubscriptionManagementService {
           await this.toSubscriptionDto(savedNew)
         );
         report.transitioned++;
+
+        const oldArchivedDto = await this.toSubscriptionDto(expiredSubscription);
+        let archivedProposed: SubscriptionDto = {
+          ...oldArchivedDto,
+          isArchived: true,
+          updatedAt: now().toISOString(),
+        };
+        const archiveBefore = await this.emitSubscriptionBefore(
+          HookEvents.SubscriptionArchivedBefore,
+          'system',
+          expiredSubscription,
+          oldArchivedDto,
+          archivedProposed
+        );
+        archivedProposed = archiveBefore.newDto ?? archivedProposed;
+        applySubscriptionDtoMutation(expiredSubscription, archivedProposed, { allowKeyChange: false });
+        expiredSubscription.markAsTransitioned();
+        const archivedSaved = await this.subscriptionRepository.save(expiredSubscription);
+        await this.emitSubscriptionAfter(
+          HookEvents.SubscriptionArchivedAfter,
+          'system',
+          archivedSaved,
+          oldArchivedDto,
+          await this.toSubscriptionDto(archivedSaved)
+        );
+        report.archived++;
       } catch (error) {
         report.errors.push({
           subscriptionKey: expiredSubscription.key,

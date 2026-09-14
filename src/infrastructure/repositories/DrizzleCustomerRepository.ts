@@ -5,6 +5,7 @@ import { DrizzleDb } from '../database/drizzle.js';
 import { customers } from '../database/schema.js';
 import { eq, and, like, or, desc, asc } from 'drizzle-orm';
 import { CustomerFilterDto } from '../../application/dtos/CustomerDto.js';
+import { applyPaging } from './applyPaging.js';
 
 export class DrizzleCustomerRepository implements ICustomerRepository {
   constructor(private readonly db: DrizzleDb) {}
@@ -107,13 +108,7 @@ export class DrizzleCustomerRepository implements ICustomerRepository {
         query = query.orderBy(sortOrder === 'desc' ? desc(customers.created_at) : asc(customers.created_at)) as typeof query;
       }
 
-      // Apply pagination
-      if (filters.limit) {
-        query = query.limit(filters.limit) as typeof query;
-      }
-      if (filters.offset) {
-        query = query.offset(filters.offset) as typeof query;
-      }
+      query = applyPaging(query, filters.offset, filters.limit) as typeof query;
     } else {
       query = query.orderBy(desc(customers.created_at)) as typeof query;
     }
@@ -124,15 +119,5 @@ export class DrizzleCustomerRepository implements ICustomerRepository {
 
   async delete(id: number): Promise<void> {
     await this.db.delete(customers).where(eq(customers.id, id));
-  }
-
-  async exists(id: number): Promise<boolean> {
-    const [record] = await this.db
-      .select({ id: customers.id })
-      .from(customers)
-      .where(eq(customers.id, id))
-      .limit(1);
-    
-    return !!record;
   }
 }

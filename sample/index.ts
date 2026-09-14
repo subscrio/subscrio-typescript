@@ -37,10 +37,9 @@ async function main() {
       console.log('\n🔄 Dropping and recreating Subscrio tables...');
       await subscrio.dropSchema();
       console.log('✅ Tables dropped successfully');
+    } else {
+      await cleanupDemoEntities(subscrio);
     }
-    
-    // Clean up existing demo entities
-    await cleanupDemoEntities(subscrio);
     
     await runPhase1_SystemSetup(subscrio);
     await runPhase2_TrialStart(subscrio);
@@ -552,11 +551,11 @@ async function runPhase3_TrialToPurchase(subscrio: Subscrio) {
 
   // Convert the trial subscription to active (trial conversion)
   console.log('📥 Input: subscrio.subscriptions.updateSubscription("acme-subscription", {');
-  console.log('  trialEndDate: undefined');
+  console.log('  clearTrialEndDate: true');
   console.log('})');
   
   await subscrio.subscriptions.updateSubscription('acme-subscription', {
-    trialEndDate: undefined // Clear trial end date to convert to active
+    clearTrialEndDate: true
   });
 
   printSuccess('Trial subscription converted to active paid subscription');

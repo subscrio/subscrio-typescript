@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { paginationFields, sortOrderField } from './filterFields.js';
 
 export const CreatePlanDtoSchema = z.object({
   productKey: z.string()
@@ -26,6 +27,7 @@ export const UpdatePlanDtoSchema = z.object({
     .optional(),
   description: z.string().max(1000).optional(),
   onExpireTransitionToBillingCycleKey: z.string().optional(),
+  clearOnExpireTransitionToBillingCycleKey: z.boolean().optional(),
   metadata: z.record(z.string(), z.unknown()).optional()
 });
 export type UpdatePlanDto = z.infer<typeof UpdatePlanDtoSchema>;
@@ -47,9 +49,8 @@ export const PlanFilterDtoSchema = z.object({
   status: z.enum(['active', 'archived']).optional(),
   search: z.string().optional(),
   sortBy: z.enum(['displayName', 'createdAt']).optional(),
-  sortOrder: z.enum(['asc', 'desc']).optional(),
-  limit: z.number().int().min(1).max(100).default(50),
-  offset: z.number().int().min(0).default(0)
+  sortOrder: sortOrderField,
+  ...paginationFields
 });
 
 export type PlanFilterDto = z.infer<typeof PlanFilterDtoSchema>;

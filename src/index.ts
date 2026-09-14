@@ -30,6 +30,7 @@ export { DurationUnit } from './domain/value-objects/DurationUnit.js';
 
 // Utilities
 export { FeatureValueValidator } from './application/utils/FeatureValueValidator.js';
+export { convertFeatureValue } from './application/utils/convertFeatureValue.js';
 export { now, nowISO, fromISOString, addDays, addMonths, addYears, isPast, isFuture, isToday, formatDate, formatDateTime } from './infrastructure/utils/date.js';
 
 // Domain entities

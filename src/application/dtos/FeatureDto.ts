@@ -1,4 +1,7 @@
 import { z } from 'zod';
+import { FeatureValueValidator } from '../utils/FeatureValueValidator.js';
+import { FeatureValueType } from '../../domain/value-objects/FeatureValueType.js';
+import { paginationFields, sortOrderField } from './filterFields.js';
 
 export const BaseFeatureDtoSchema = z.object({
   key: z.string()
@@ -17,16 +20,7 @@ export const BaseFeatureDtoSchema = z.object({
 });
 
 export const CreateFeatureDtoSchema = BaseFeatureDtoSchema.refine((data) => {
-  // Validate defaultValue based on valueType
-  if (data.valueType === 'toggle') {
-    return data.defaultValue === 'true' || data.defaultValue === 'false';
-  }
-  if (data.valueType === 'numeric') {
-    const num = Number(data.defaultValue);
-    return !isNaN(num) && isFinite(num);
-  }
-  // Text type accepts any string
-  return true;
+  return FeatureValueValidator.isValid(data.defaultValue, data.valueType as FeatureValueType);
 }, {
   message: 'Invalid default value for the selected value type. Toggle must be "true" or "false", Numeric must be a valid number.',
   path: ['defaultValue']
@@ -47,19 +41,10 @@ export const UpdateFeatureDtoSchema = z.object({
   validator: z.record(z.string(), z.unknown()).optional(),
   metadata: z.record(z.string(), z.unknown()).optional()
 }).refine((data) => {
-  // Only validate if both valueType and defaultValue are provided
   if (!data.valueType || !data.defaultValue) {
     return true;
   }
-  
-  if (data.valueType === 'toggle') {
-    return data.defaultValue === 'true' || data.defaultValue === 'false';
-  }
-  if (data.valueType === 'numeric') {
-    const num = Number(data.defaultValue);
-    return !isNaN(num) && isFinite(num);
-  }
-  return true;
+  return FeatureValueValidator.isValid(data.defaultValue, data.valueType as FeatureValueType);
 }, {
   message: 'Invalid default value for the selected value type. Toggle must be "true" or "false", Numeric must be a valid number.',
   path: ['defaultValue']
@@ -86,9 +71,8 @@ export const FeatureFilterDtoSchema = z.object({
   groupName: z.string().optional(),
   search: z.string().optional(),
   sortBy: z.enum(['displayName', 'createdAt']).optional(),
-  sortOrder: z.enum(['asc', 'desc']).optional(),
-  limit: z.number().int().min(1).max(100).default(50),
-  offset: z.number().int().min(0).default(0)
+  sortOrder: sortOrderField,
+  ...paginationFields
 });
 
 export type FeatureFilterDto = z.infer<typeof FeatureFilterDtoSchema>;

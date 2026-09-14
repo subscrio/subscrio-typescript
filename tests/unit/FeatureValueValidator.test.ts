@@ -113,6 +113,25 @@ describe('FeatureValueValidator', () => {
       });
     });
 
+    describe('tryValidate', () => {
+      test('returns ok for valid toggle', () => {
+        expect(FeatureValueValidator.tryValidate('TRUE', FeatureValueType.Toggle)).toEqual({ ok: true });
+      });
+
+      test('returns message for invalid numeric', () => {
+        const result = FeatureValueValidator.tryValidate('nope', FeatureValueType.Numeric);
+        expect(result.ok).toBe(false);
+        if (!result.ok) {
+          expect(result.message).toMatch(/number/i);
+        }
+      });
+
+      test('isValid matches tryValidate', () => {
+        expect(FeatureValueValidator.isValid('true', FeatureValueType.Toggle)).toBe(true);
+        expect(FeatureValueValidator.isValid('maybe', FeatureValueType.Toggle)).toBe(false);
+      });
+    });
+
     describe('Unknown feature types', () => {
       test('throws for unknown feature type', () => {
         expect(() => {

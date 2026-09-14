@@ -10,7 +10,7 @@ export interface IPlanRepository {
   findAll(filters?: PlanFilterDto): Promise<Plan[]>;
   findByIds(ids: number[]): Promise<Plan[]>;
   delete(id: number): Promise<void>;
-  exists(id: number): Promise<boolean>;
+
   
   // Foreign key checks
   hasBillingCycles(planId: number): Promise<boolean>;

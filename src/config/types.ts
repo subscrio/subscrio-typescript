@@ -12,15 +12,27 @@ export type InitialConfigSync =
 /**
  * Subscrio configuration interface
  */
+export type DatabaseType = 'postgres' | 'sqlserver';
+
 export interface SubscrioConfig {
   database: {
     connectionString: string;
     ssl?: boolean;
     poolSize?: number;
+    /**
+     * Database dialect. Detected from the connection string when omitted.
+     * PostgreSQL is the supported query runtime. SQL Server is supported for schema install/drop/migrate.
+     */
+    databaseType?: DatabaseType;
   };
   adminPassphrase?: string;
   stripe?: {
     secretKey: string;
+    /**
+     * Optional Stripe webhook endpoint secret (`whsec_...`).
+     * When set, use `constructStripeEvent` to verify signatures.
+     */
+    webhookSecret?: string;
   };
   logging?: {
     level: 'debug' | 'info' | 'warn' | 'error';

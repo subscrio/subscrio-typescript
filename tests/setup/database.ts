@@ -1,6 +1,6 @@
-import { randomBytes } from 'crypto';
 import { Client } from 'pg';
 import { Subscrio } from '../../src/index.js';
+import { redactConnectionString } from '../../src/infrastructure/utils/redactConnectionString.js';
 
 export interface TestContext {
   dbName: string;
@@ -61,8 +61,8 @@ export async function teardownTestDatabase(dbName: string): Promise<void> {
     
     console.log(`\n🔍 Test database preserved for debugging:`);
     console.log(`   Database: ${dbName}`);
-    console.log(`   Connection: ${connectionString}`);
-    console.log(`   To connect: psql ${connectionString}`);
+    console.log(`   Connection: ${redactConnectionString(connectionString)}`);
+    console.log(`   To connect: psql ${redactConnectionString(connectionString)}`);
     console.log(`   To drop: DROP DATABASE ${dbName};`);
     return;
   }

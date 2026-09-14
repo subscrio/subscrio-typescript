@@ -17,10 +17,10 @@ import { now } from '../../infrastructure/utils/date.js';
 import { 
   ValidationError, 
   NotFoundError, 
-  ConflictError, 
   DomainError 
 } from '../errors/index.js';
 import { FeatureValueValidator } from '../utils/FeatureValueValidator.js';
+import { assertValid, ensureKeyAvailable, requireByKey } from '../utils/ValidationGuard.js';
 
 export class FeatureManagementService {
   constructor(
@@ -29,20 +29,8 @@ export class FeatureManagementService {
   ) {}
 
   async createFeature(dto: CreateFeatureDto): Promise<FeatureDto> {
-    const validationResult = CreateFeatureDtoSchema.safeParse(dto);
-    if (!validationResult.success) {
-      throw new ValidationError(
-        'Invalid feature data',
-        validationResult.error.issues
-      );
-    }
-    const validatedDto = validationResult.data;
-
-    // Check if key already exists
-    const existing = await this.featureRepository.findByKey(validatedDto.key);
-    if (existing) {
-      throw new ConflictError(`Feature with key '${validatedDto.key}' already exists`);
-    }
+    const validatedDto = assertValid(CreateFeatureDtoSchema.safeParse(dto), 'feature data');
+    await ensureKeyAvailable((k) => this.featureRepository.findByKey(k), validatedDto.key, 'Feature');
 
     // Validate default value based on type
     FeatureValueValidator.validate(validatedDto.defaultValue, validatedDto.valueType as FeatureValueType);
@@ -68,32 +56,25 @@ export class FeatureManagementService {
   }
 
   async updateFeature(key: string, dto: UpdateFeatureDto): Promise<FeatureDto> {
-    const validationResult = UpdateFeatureDtoSchema.safeParse(dto);
-    if (!validationResult.success) {
-      throw new ValidationError(
-        'Invalid update data',
-        validationResult.error.issues
-      );
-    }
-    const validatedDto = validationResult.data;
-
-    const feature = await this.featureRepository.findByKey(key);
-    if (!feature) {
-      throw new NotFoundError(`Feature with key '${key}' not found`);
-    }
+    const validatedDto = assertValid(UpdateFeatureDtoSchema.safeParse(dto), 'update data');
+    const feature = await requireByKey((k) => this.featureRepository.findByKey(k), key, 'Feature');
 
     // Key is immutable - no validation needed
 
-    // Update properties
     if (validatedDto.displayName !== undefined) {
       feature.updateDisplayName(validatedDto.displayName);
     }
     if (validatedDto.description !== undefined) {
       feature.props.description = validatedDto.description;
     }
+    if (validatedDto.valueType !== undefined) {
+      feature.setValueType(validatedDto.valueType as FeatureValueType);
+    }
     if (validatedDto.defaultValue !== undefined) {
       FeatureValueValidator.validate(validatedDto.defaultValue, feature.props.valueType);
       feature.props.defaultValue = validatedDto.defaultValue;
+    } else if (validatedDto.valueType !== undefined) {
+      FeatureValueValidator.validate(feature.props.defaultValue, feature.props.valueType);
     }
     if (validatedDto.groupName !== undefined) {
       feature.props.groupName = validatedDto.groupName;

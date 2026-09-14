@@ -16,6 +16,9 @@ import { HookEvents, type CustomerMutationHookEvent, type SubscriptionMutationHo
 import { cloneJson } from '../hooks/cloneJson.js';
 import { applyCustomerDtoMutation } from '../hooks/applyCustomerDtoMutation.js';
 import { applySubscriptionDtoMutation } from '../hooks/applySubscriptionDtoMutation.js';
+import { compactDefined, revalidateAfterHook } from '../utils/ValidationGuard.js';
+import { CreateCustomerDtoSchema, UpdateCustomerDtoSchema } from '../dtos/CustomerDto.js';
+import { CreateSubscriptionDtoSchema, UpdateSubscriptionDtoSchema } from '../dtos/SubscriptionDto.js';
 import { CustomerMapper } from '../mappers/CustomerMapper.js';
 import { SubscriptionMapper } from '../mappers/SubscriptionMapper.js';
 import type { CustomerDto } from '../dtos/CustomerDto.js';
@@ -30,7 +33,7 @@ export class StripeIntegrationService {
     private readonly customerRepository: ICustomerRepository,
     private readonly planRepository: IPlanRepository,
     private readonly billingCycleRepository: IBillingCycleRepository,
-    private readonly config?: { stripe?: { secretKey?: string } },
+    private readonly config?: { stripe?: { secretKey?: string; webhookSecret?: string } },
     private readonly hooks: HookDispatcher = new HookDispatcher()
   ) {}
 
@@ -139,8 +142,39 @@ export class StripeIntegrationService {
     let newDto = await this.toSubscriptionDto(subscription);
     newDto = (await this.emitSubscriptionBefore(beforeType, subscription, oldDto, newDto)) ?? newDto;
     if (newDto) {
+      const isCreate = beforeType === HookEvents.SubscriptionCreatedBefore;
+      revalidateAfterHook(
+        isCreate ? CreateSubscriptionDtoSchema : UpdateSubscriptionDtoSchema,
+        compactDefined(
+          isCreate
+            ? {
+                key: newDto.key,
+                customerKey: newDto.customerKey,
+                billingCycleKey: newDto.billingCycleKey,
+                activationDate: newDto.activationDate,
+                expirationDate: newDto.expirationDate,
+                cancellationDate: newDto.cancellationDate,
+                trialEndDate: newDto.trialEndDate,
+                currentPeriodStart: newDto.currentPeriodStart,
+                currentPeriodEnd: newDto.currentPeriodEnd,
+                stripeSubscriptionId: newDto.stripeSubscriptionId,
+                metadata: newDto.metadata,
+              }
+            : {
+                billingCycleKey: newDto.billingCycleKey,
+                expirationDate: newDto.expirationDate,
+                cancellationDate: newDto.cancellationDate,
+                trialEndDate: newDto.trialEndDate,
+                currentPeriodStart: newDto.currentPeriodStart,
+                currentPeriodEnd: newDto.currentPeriodEnd,
+                stripeSubscriptionId: newDto.stripeSubscriptionId,
+                metadata: newDto.metadata,
+              }
+        ),
+        isCreate ? 'subscription data' : 'subscription update'
+      );
       applySubscriptionDtoMutation(subscription, newDto, {
-        allowKeyChange: beforeType === HookEvents.SubscriptionCreatedBefore,
+        allowKeyChange: isCreate,
       });
     }
     const saved = await this.subscriptionRepository.save(subscription);
@@ -157,8 +191,29 @@ export class StripeIntegrationService {
     let newDto = CustomerMapper.toDto(customer);
     newDto = (await this.emitCustomerBefore(beforeType, customer, oldDto, newDto)) ?? newDto;
     if (newDto) {
+      const isCreate = beforeType === HookEvents.CustomerCreatedBefore;
+      revalidateAfterHook(
+        isCreate ? CreateCustomerDtoSchema : UpdateCustomerDtoSchema,
+        compactDefined(
+          isCreate
+            ? {
+                key: newDto.key,
+                displayName: newDto.displayName,
+                email: newDto.email,
+                externalBillingId: newDto.externalBillingId,
+                metadata: newDto.metadata,
+              }
+            : {
+                displayName: newDto.displayName,
+                email: newDto.email,
+                externalBillingId: newDto.externalBillingId,
+                metadata: newDto.metadata,
+              }
+        ),
+        isCreate ? 'customer data' : 'customer update'
+      );
       applyCustomerDtoMutation(customer, newDto, {
-        allowKeyChange: beforeType === HookEvents.CustomerCreatedBefore,
+        allowKeyChange: isCreate,
       });
     }
     const saved = await this.customerRepository.save(customer);
@@ -180,47 +235,44 @@ export class StripeIntegrationService {
       });
     }
 
-    // Event is already verified - process based on type
-    switch (event.type) {
+    const eventToProcess = cloneJson(event);
+
+    switch (eventToProcess.type) {
       case 'customer.created':
       case 'customer.updated':
-        await this.handleCustomerUpsert(event.data.object as Stripe.Customer);
+        await this.handleCustomerUpsert(eventToProcess.data.object as Stripe.Customer);
         break;
 
       case 'customer.deleted':
-        await this.handleCustomerDeleted(event.data.object as Stripe.Customer | Stripe.DeletedCustomer);
+        await this.handleCustomerDeleted(eventToProcess.data.object as Stripe.Customer | Stripe.DeletedCustomer);
         break;
 
       case 'customer.subscription.created':
         await this.handleSubscriptionCreated(
-          event.data.object as Stripe.Subscription
+          eventToProcess.data.object as Stripe.Subscription
         );
         break;
 
       case 'customer.subscription.updated':
         await this.handleSubscriptionUpdated(
-          event.data.object as Stripe.Subscription
+          eventToProcess.data.object as Stripe.Subscription
         );
         break;
 
       case 'customer.subscription.deleted':
         await this.handleSubscriptionDeleted(
-          event.data.object as Stripe.Subscription
+          eventToProcess.data.object as Stripe.Subscription
         );
         break;
 
       case 'invoice.payment_succeeded':
         await this.handlePaymentSucceeded(
-          event.data.object as Stripe.Invoice
+          eventToProcess.data.object as Stripe.Invoice
         );
         break;
 
       default:
-        // Ignore unhandled event types
-        // Log unhandled event types for debugging (remove in production)
-        if (process.env.NODE_ENV === 'development') {
-          console.log(`Unhandled Stripe event type: ${event.type}`);
-        }
+        break;
     }
 
     if (this.hooks.hasListeners(HookEvents.StripeReceivedAfter)) {
@@ -453,63 +505,35 @@ export class StripeIntegrationService {
   }
 
   /**
-   * Create Stripe subscription from Subscrio data
+   * Creating Stripe subscriptions from Subscrio is not supported.
+   * Use `createCheckoutSession` or `processStripeEvent` instead.
+   * @deprecated Use processStripeEvent or createCheckoutSession instead.
    */
   async createStripeSubscription(
-    customerKey: string,
-    planKey: string,
-    billingCycleKey: string,
+    _customerKey: string,
+    _planKey: string,
+    _billingCycleKey: string,
     _stripePriceId: string
   ): Promise<Subscription> {
-    // Find customer
-    const customer = await this.customerRepository.findByKey(customerKey);
-    if (!customer) {
-      throw new NotFoundError(`Customer with key '${customerKey}' not found`);
-    }
-
-    if (!customer.externalBillingId) {
-      throw new ValidationError('Customer must have external billing ID for Stripe integration');
-    }
-
-    // Find plan
-    const plan = await this.planRepository.findByKey(planKey);
-    if (!plan) {
-      throw new NotFoundError(`Plan with key '${planKey}' not found`);
-    }
-
-    // Find billing cycle
-    const billingCycle = await this.billingCycleRepository.findByKey(billingCycleKey);
-    if (!billingCycle) {
-      throw new NotFoundError(`Billing cycle with key '${billingCycleKey}' not found`);
-    }
-
-    // Entities from repository always have IDs (BIGSERIAL PRIMARY KEY)
-    // This would integrate with Stripe SDK to create the subscription
-    // For now, creating a placeholder subscription
-    // Create domain entity (no ID - database will generate)
-    const subscription = new Subscription({
-      key: generateKey('sub'),  // Auto-generate key for Stripe subscriptions
-      customerId: customer.id!,
-      planId: plan.id!,
-      billingCycleId: billingCycle.id!,
-      status: SubscriptionStatus.Active,  // Default status
-      isArchived: false,
-      activationDate: now(),
-      currentPeriodStart: now(),
-      currentPeriodEnd: billingCycle.calculateNextPeriodEnd(now()) ?? undefined,
-      stripeSubscriptionId: `sub_placeholder_${Date.now()}`,
-      featureOverrides: [],
-      createdAt: now(),
-      updatedAt: now()
-    });
-
-    const savedSubscription = await this.saveSubscriptionWithHooks(
-      HookEvents.SubscriptionCreatedBefore,
-      HookEvents.SubscriptionCreatedAfter,
-      subscription,
-      null
+    throw new ValidationError(
+      'createStripeSubscription is not supported. ' +
+      'Use createCheckoutSession to start a Stripe Checkout session, ' +
+      'or processStripeEvent to sync verified Stripe webhook events into Subscrio.'
     );
-    return savedSubscription;
+  }
+
+  /**
+   * Verify a Stripe webhook signature and construct an Event.
+   * Requires `config.stripe.webhookSecret` (`whsec_...`).
+   */
+  constructStripeEvent(payload: string | Buffer, signatureHeader: string): Stripe.Event {
+    const secret = this.config?.stripe?.webhookSecret;
+    if (!secret) {
+      throw new ConfigurationError(
+        'Stripe webhook secret is not set. Configure stripe.webhookSecret before calling constructStripeEvent.'
+      );
+    }
+    return Stripe.webhooks.constructEvent(payload, signatureHeader, secret);
   }
 
   private async resolveCustomer(
@@ -533,6 +557,16 @@ export class StripeIntegrationService {
     if (!fallbackCustomer) {
       throw new NotFoundError(
         `Customer with key '${customerKey}' not found while handling Stripe customer '${stripeCustomerId}'.`
+      );
+    }
+
+    if (
+      fallbackCustomer.externalBillingId &&
+      fallbackCustomer.externalBillingId !== stripeCustomerId
+    ) {
+      throw new ConflictError(
+        `Customer '${customerKey}' is already linked to a different Stripe customer. ` +
+        `Refusing to overwrite externalBillingId from webhook metadata.`
       );
     }
 
@@ -675,8 +709,10 @@ export class StripeIntegrationService {
         return SubscriptionStatus.Pending;
       case 'incomplete_expired':
         return SubscriptionStatus.Expired;
+      case 'paused':
+        return SubscriptionStatus.Pending;
       default:
-        return SubscriptionStatus.Active;
+        throw new ValidationError(`Unsupported Stripe subscription status '${status}'`);
     }
   }
 

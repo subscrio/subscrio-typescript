@@ -21,6 +21,7 @@ import { HookDispatcher } from '../hooks/HookDispatcher.js';
 import { HookEvents, type HookSource, type CustomerMutationHookEvent } from '../hooks/types.js';
 import { cloneJson } from '../hooks/cloneJson.js';
 import { applyCustomerDtoMutation } from '../hooks/applyCustomerDtoMutation.js';
+import { compactDefined, revalidateAfterHook } from '../utils/ValidationGuard.js';
 
 export class CustomerManagementService {
   constructor(
@@ -110,6 +111,18 @@ export class CustomerManagementService {
       proposed
     )) ?? proposed;
 
+    revalidateAfterHook(
+      CreateCustomerDtoSchema,
+      compactDefined({
+        key: proposed.key,
+        displayName: proposed.displayName,
+        email: proposed.email,
+        externalBillingId: proposed.externalBillingId,
+        metadata: proposed.metadata,
+      }),
+      'customer data'
+    );
+
     applyCustomerDtoMutation(customer, proposed, { allowKeyChange: true });
 
     if (customer.key !== validatedDto.key) {
@@ -181,6 +194,17 @@ export class CustomerManagementService {
       oldDto,
       proposed
     )) ?? proposed;
+
+    revalidateAfterHook(
+      UpdateCustomerDtoSchema,
+      compactDefined({
+        displayName: proposed.displayName,
+        email: proposed.email,
+        externalBillingId: proposed.externalBillingId,
+        metadata: proposed.metadata,
+      }),
+      'customer update'
+    );
 
     applyCustomerDtoMutation(customer, proposed, { allowKeyChange: false });
 

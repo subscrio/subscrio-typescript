@@ -10,10 +10,6 @@ export interface EnvironmentConfig {
     connectionTimeout: number;
     queryTimeout: number;
   };
-  cache: {
-    planCacheSize: number;
-    planCacheTTL: number;
-  };
   performance: {
     maxSubscriptionsPerCustomer: number;
     batchSize: number;
@@ -31,10 +27,6 @@ export function getEnvironmentConfig(): EnvironmentConfig {
       maxConnections: parseInt(process.env.DB_MAX_CONNECTIONS || '10'),
       connectionTimeout: parseInt(process.env.DB_CONNECTION_TIMEOUT || '30000'),
       queryTimeout: parseInt(process.env.DB_QUERY_TIMEOUT || '60000'),
-    },
-    cache: {
-      planCacheSize: parseInt(process.env.PLAN_CACHE_SIZE || '1000'),
-      planCacheTTL: parseInt(process.env.PLAN_CACHE_TTL || '300000'), // 5 minutes
     },
     performance: {
       maxSubscriptionsPerCustomer: parseInt(process.env.MAX_SUBSCRIPTIONS_PER_CUSTOMER || '100'),
@@ -76,13 +68,6 @@ export function getLogLevel(): string {
  */
 export function getDatabaseConfig() {
   return getEnvironmentConfig().database;
-}
-
-/**
- * Get cache configuration
- */
-export function getCacheConfig() {
-  return getEnvironmentConfig().cache;
 }
 
 /**

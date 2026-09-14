@@ -18,10 +18,10 @@ import { now } from '../../infrastructure/utils/date.js';
 import { 
   ValidationError, 
   NotFoundError, 
-  ConflictError, 
   DomainError 
 } from '../errors/index.js';
 import { FeatureValueValidator } from '../utils/FeatureValueValidator.js';
+import { assertValid, ensureKeyAvailable, requireByKey } from '../utils/ValidationGuard.js';
 
 export class PlanManagementService {
   constructor(
@@ -50,28 +50,13 @@ export class PlanManagementService {
   }
 
   async createPlan(dto: CreatePlanDto): Promise<PlanDto> {
-    const validationResult = CreatePlanDtoSchema.safeParse(dto);
-    if (!validationResult.success) {
-      throw new ValidationError(
-        'Invalid plan data',
-        validationResult.error.issues
-      );
-    }
-    const validatedDto = validationResult.data;
-
-    // Verify product exists by key
-    const product = await this.productRepository.findByKey(validatedDto.productKey);
-    if (!product) {
-      throw new NotFoundError(`Product with key '${validatedDto.productKey}' not found`);
-    }
-
-    // Check if plan key already exists globally
-    const existing = await this.planRepository.findByKey(validatedDto.key);
-    if (existing) {
-      throw new ConflictError(
-        `Plan with key '${validatedDto.key}' already exists`
-      );
-    }
+    const validatedDto = assertValid(CreatePlanDtoSchema.safeParse(dto), 'plan data');
+    const product = await requireByKey(
+      (k) => this.productRepository.findByKey(k),
+      validatedDto.productKey,
+      'Product'
+    );
+    await ensureKeyAvailable((k) => this.planRepository.findByKey(k), validatedDto.key, 'Plan');
 
 
     // Create domain entity (no ID - database will generate)
@@ -120,7 +105,9 @@ export class PlanManagementService {
     if (validatedDto.description !== undefined) {
       plan.props.description = validatedDto.description;
     }
-    if (validatedDto.onExpireTransitionToBillingCycleKey !== undefined) {
+    if (validatedDto.clearOnExpireTransitionToBillingCycleKey) {
+      plan.props.onExpireTransitionToBillingCycleKey = undefined;
+    } else if (validatedDto.onExpireTransitionToBillingCycleKey !== undefined) {
       plan.props.onExpireTransitionToBillingCycleKey = validatedDto.onExpireTransitionToBillingCycleKey;
     }
     if (validatedDto.metadata !== undefined) {
@@ -249,7 +236,18 @@ export class PlanManagementService {
       throw new NotFoundError(`Feature with key '${featureKey}' not found`);
     }
 
-    // Validate value against feature type
+    const product = await this.productRepository.findByKey(plan.productKey);
+    if (!product) {
+      throw new NotFoundError(`Product with key '${plan.productKey}' not found`);
+    }
+    const associatedFeatureIds = await this.productRepository.getFeaturesByProduct(product.id!);
+    if (!associatedFeatureIds.includes(feature.id!)) {
+      throw new ValidationError(
+        `Feature '${featureKey}' is not associated with the product for plan '${planKey}'. ` +
+        'Associate the feature with the product before setting a plan value.'
+      );
+    }
+
     FeatureValueValidator.validate(value, feature.props.valueType);
 
     // Feature from repository always has ID (BIGSERIAL PRIMARY KEY)
