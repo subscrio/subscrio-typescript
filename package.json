@@ -6,7 +6,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/subscrio/subscrio-typescript.git"
+    "url": "git+https://github.com/subscrio/subscrio-typescript.git"
   },
   "homepage": "https://subscrio.com/typescript-entitlement-library/",
   "bugs": {
@@ -60,7 +60,7 @@
     "migrate": "tsx src/cli/migrate.ts"
   },
   "bin": {
-    "subscrio-migrate": "./dist/subscrio-migrate.js"
+    "subscrio-migrate": "dist/subscrio-migrate.js"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
