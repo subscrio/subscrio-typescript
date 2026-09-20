@@ -7,14 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Hygiene
+## [0.4.0] - 2026-09-20
 
-- Key format rules remain intentionally per-entity (product/plan: lowercase-hyphen; feature/subscription: upper/underscore allowed) pending a public API decision
-- TypeScript query runtime remains PostgreSQL via Drizzle; SQL Server dialect SQL is generated for schema install/view/drop, and live SQL Server schema smoke is covered
-- Unused repository `exists` helpers removed (same intent as .NET ExistsAsync removal)
-- Application services still use Drizzle-backed repository implementations internally (ORM types remain on the package surface until a major version)
-- Live Stripe Checkout and real webhook-secret round-trips remain credential-bound
-- Multi-Node CI matrix is not added
+### Added
+
+- SQL Server dialect SQL for schema install, migration, verification, and removal. The TypeScript query runtime remains PostgreSQL-only.
+- Stripe webhook signature verification through `constructStripeEvent` and `stripe.webhookSecret`.
+- Explicit clear operations for subscription trial dates and plan expiration transitions.
+- Subscription feature overrides in returned subscription DTOs.
+- Typed feature-value conversion through the exported `convertFeatureValue` helper.
+- Admin-passphrase verification before destructive schema removal.
+- Stripe received hooks now include optional customer and subscription IDs extracted from the verified event.
+
+### Changed
+
+- Configuration sync now loads every page instead of stopping after the first 100 records.
+- Feature resolution evaluates all eligible subscriptions before falling back to plan or feature defaults.
+- List queries apply a stable order before offset and limit.
+- Stripe processing fails closed for unknown subscription states and no longer treats the placeholder subscription helper as a real Stripe create operation.
+- The audit-log and payments peer dependency range for this release is `>=0.4.0 <0.5.0`.
+
+### Fixed
+
+- Feature type changes are persisted during updates.
+- Plan feature values must belong to the plan's product.
+- Before-hook mutations are validated again before customer and subscription records are saved.
+- Expiration transitions create the replacement subscription before archiving the old one.
+- Schema verification now distinguishes a missing schema from an unexpected database error.
+- Connection strings are redacted before they are written to logs.
+- The `subscrio-migrate` executable now points to compiled JavaScript included in the npm package.
+
+### Compatibility
+
+- Repository interfaces no longer expose the unused `exists` methods. Consumers that implement these exported interfaces must remove those members when upgrading.
 
 ## [0.3.1] - 2026-09-11
 

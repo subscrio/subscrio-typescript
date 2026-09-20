@@ -14,6 +14,9 @@ const SQLCMD =
   'C:\\Program Files\\Microsoft SQL Server\\Client SDK\\ODBC\\170\\Tools\\Binn\\SQLCMD.EXE';
 const SERVER = process.env.SQLSERVER_TEST_SERVER || 'localhost';
 const DB_NAME = 'subscrio_ts_schema_test';
+const sqlServerIsConfigured = Boolean(
+  process.env.SQLCMD_PATH || process.env.SQLSERVER_TEST_SERVER
+);
 
 function runSql(database: string, query: string): string {
   try {
@@ -31,7 +34,9 @@ function runSql(database: string, query: string): string {
 }
 
 describe('SQL Server schema smoke', () => {
-  test('installs and drops Subscrio schema on a live SQL Server instance', () => {
+  const sqlServerTest = sqlServerIsConfigured ? test : test.skip;
+
+  sqlServerTest('installs and drops Subscrio schema on a live SQL Server instance', () => {
     expect(existsSync(SQLCMD), `sqlcmd not found at ${SQLCMD}`).toBe(true);
 
     runSql(

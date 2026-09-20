@@ -226,12 +226,14 @@ export class StripeIntegrationService {
    * NOTE: Signature verification MUST be done by implementor before calling this
    */
   async processStripeEvent(event: Stripe.Event): Promise<void> {
+    const stripeRefs = this.extractStripeEventRefs(event);
     if (this.hooks.hasListeners(HookEvents.StripeReceivedBefore)) {
       await this.hooks.emit(HookEvents.StripeReceivedBefore, {
         type: HookEvents.StripeReceivedBefore,
         phase: 'before',
         occurredAt: new Date().toISOString(),
         data: cloneJson(event),
+        ...stripeRefs,
       });
     }
 
@@ -281,6 +283,7 @@ export class StripeIntegrationService {
         phase: 'after',
         occurredAt: new Date().toISOString(),
         data: cloneJson(event),
+        ...stripeRefs,
       });
     }
   }
@@ -603,6 +606,52 @@ export class StripeIntegrationService {
     }
 
     return customer.id;
+  }
+
+  private extractStripeEventRefs(event: Stripe.Event): {
+    stripeCustomerId?: string;
+    stripeSubscriptionId?: string;
+  } {
+    const obj = event.data.object;
+
+    if (event.type.startsWith('customer.subscription.')) {
+      const subscription = obj as Stripe.Subscription;
+      return {
+        stripeCustomerId: this.extractOptionalCustomerId(subscription.customer),
+        stripeSubscriptionId: subscription.id,
+      };
+    }
+
+    if (event.type.startsWith('customer.')) {
+      return { stripeCustomerId: (obj as Stripe.Customer | Stripe.DeletedCustomer).id };
+    }
+
+    if (event.type.startsWith('invoice.')) {
+      const invoice = obj as Stripe.Invoice;
+      return {
+        stripeCustomerId: this.extractOptionalCustomerId(invoice.customer),
+        stripeSubscriptionId: this.getInvoiceSubscriptionId(invoice),
+      };
+    }
+
+    if (event.type.startsWith('checkout.session.')) {
+      const session = obj as Stripe.Checkout.Session;
+      return {
+        stripeCustomerId: this.extractOptionalCustomerId(session.customer),
+        stripeSubscriptionId:
+          typeof session.subscription === 'string'
+            ? session.subscription
+            : session.subscription?.id,
+      };
+    }
+
+    return {};
+  }
+
+  private extractOptionalCustomerId(
+    customer: string | Stripe.Customer | Stripe.DeletedCustomer | null
+  ): string | undefined {
+    return customer ? this.extractCustomerId(customer) : undefined;
   }
 
   private async resolvePlanFromSubscription(stripeSubscription: Stripe.Subscription): Promise<{

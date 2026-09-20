@@ -7,7 +7,8 @@ export default defineConfig({
     lib: {
       entry: {
         index: resolve(import.meta.dirname, 'src/index.ts'),
-        'config/index': resolve(import.meta.dirname, 'src/config/index.ts')
+        'config/index': resolve(import.meta.dirname, 'src/config/index.ts'),
+        'subscrio-migrate': resolve(import.meta.dirname, 'src/cli/migrate.ts')
       },
       name: 'Subscrio',
       formats: ['es', 'cjs']
@@ -19,6 +20,7 @@ export default defineConfig({
         'stripe',
         'zod',
         'bcryptjs',
+        'dotenv',
         'uuidv7',
         'crypto',
         'fs/promises',

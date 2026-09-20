@@ -65,6 +65,8 @@ export interface StripeReceivedHookEvent {
   phase: HookPhase;
   occurredAt: string;
   data: Stripe.Event;
+  stripeCustomerId?: string;
+  stripeSubscriptionId?: string;
 }
 
 export type HookEventMap = {
