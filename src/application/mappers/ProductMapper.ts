@@ -1,17 +1,19 @@
-import { Product } from '../../domain/entities/Product.js';
-import { ProductDto } from '../dtos/ProductDto.js';
-import { ProductStatus } from '../../domain/value-objects/ProductStatus.js';
+import { Product } from "../../domain/entities/Product.js";
+import { ProductDto } from "../dtos/ProductDto.js";
+import { ProductStatus } from "../../domain/value-objects/ProductStatus.js";
 
 export class ProductMapper {
   static toDto(product: Product): ProductDto {
     return {
+      addons: [],
+      features: [],
       key: product.key,
       displayName: product.displayName,
       description: product.props.description ?? null,
       status: product.status,
       metadata: product.props.metadata ?? null,
       createdAt: product.props.createdAt.toISOString(),
-      updatedAt: product.props.updatedAt.toISOString()
+      updatedAt: product.props.updatedAt.toISOString(),
     };
   }
 
@@ -24,9 +26,9 @@ export class ProductMapper {
         status: raw.status as ProductStatus,
         metadata: raw.metadata,
         createdAt: new Date(raw.created_at),
-        updatedAt: new Date(raw.updated_at)
+        updatedAt: new Date(raw.updated_at),
       },
-      raw.id as number | undefined
+      raw.id as number | undefined,
     );
   }
 
@@ -38,15 +40,14 @@ export class ProductMapper {
       status: product.status,
       metadata: product.props.metadata,
       created_at: product.props.createdAt,
-      updated_at: product.props.updatedAt
+      updated_at: product.props.updatedAt,
     };
-    
+
     // Only include id for updates (not inserts)
     if (product.id !== undefined) {
       record.id = product.id;
     }
-    
+
     return record;
   }
 }
-

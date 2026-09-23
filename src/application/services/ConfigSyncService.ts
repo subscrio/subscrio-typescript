@@ -1,5 +1,13 @@
-import { readFile } from 'fs/promises';
-import { Subscrio } from '../../Subscrio.js';
+import { validateAccountingConfig } from "./validateAccountingConfig.js";
+import {
+  exportConfig,
+  captureAccountingConfig,
+  compareAccountingConfig,
+} from "./exportConfig.js";
+import { systemClock, type Clock } from "../utils/Clock.js";
+import { syncAccountingConfig } from "./syncAccountingConfig.js";
+import { readFile } from "fs/promises";
+import { Subscrio } from "../../Subscrio.js";
 import {
   ConfigSyncDto,
   ConfigSyncDtoSchema,
@@ -8,14 +16,26 @@ import {
   ProductConfig,
   PlanConfig,
   BillingCycleConfig,
-  validateConfigJsonPropertyOrder
-} from '../dtos/ConfigSyncDto.js';
-import { CreateFeatureDto, UpdateFeatureDto, FeatureDto } from '../dtos/FeatureDto.js';
-import { CreateProductDto, UpdateProductDto, ProductDto } from '../dtos/ProductDto.js';
-import { CreatePlanDto, UpdatePlanDto, PlanDto } from '../dtos/PlanDto.js';
-import { CreateBillingCycleDto, UpdateBillingCycleDto, BillingCycleDto } from '../dtos/BillingCycleDto.js';
-import { ValidationError } from '../errors/index.js';
-import { loadAllPages } from '../utils/PagedListLoader.js';
+  validateConfigJsonPropertyOrder,
+} from "../dtos/ConfigSyncDto.js";
+import {
+  CreateFeatureDto,
+  UpdateFeatureDto,
+  FeatureDto,
+} from "../dtos/FeatureDto.js";
+import {
+  CreateProductDto,
+  UpdateProductDto,
+  ProductDto,
+} from "../dtos/ProductDto.js";
+import { CreatePlanDto, UpdatePlanDto, PlanDto } from "../dtos/PlanDto.js";
+import {
+  CreateBillingCycleDto,
+  UpdateBillingCycleDto,
+  BillingCycleDto,
+} from "../dtos/BillingCycleDto.js";
+import { ValidationError } from "../errors/index.js";
+import { loadAllPages } from "../utils/PagedListLoader.js";
 
 /**
  * Deep equality check for objects (for metadata comparison)
@@ -23,21 +43,21 @@ import { loadAllPages } from '../utils/PagedListLoader.js';
 function deepEqual(a: unknown, b: unknown): boolean {
   if (a === b) return true;
   if (a == null || b == null) return a === b;
-  if (typeof a !== 'object' || typeof b !== 'object') return false;
-  
+  if (typeof a !== "object" || typeof b !== "object") return false;
+
   const aObj = a as Record<string, unknown>;
   const bObj = b as Record<string, unknown>;
-  
+
   const aKeys = Object.keys(aObj);
   const bKeys = Object.keys(bObj);
-  
+
   if (aKeys.length !== bKeys.length) return false;
-  
+
   for (const key of aKeys) {
     if (!bKeys.includes(key)) return false;
     if (!deepEqual(aObj[key], bObj[key])) return false;
   }
-  
+
   return true;
 }
 
@@ -45,31 +65,52 @@ function deepEqual(a: unknown, b: unknown): boolean {
  * Normalize null/undefined/empty string for comparison
  */
 function normalizeValue(value: string | null | undefined): string | null {
-  if (value === undefined || value === '') return null;
+  if (value === undefined || value === "") return null;
   return value;
 }
 
 /**
  * Compare feature config with existing feature DTO to detect changes
  */
-function hasFeatureChanges(config: FeatureConfig, existing: FeatureDto): boolean {
+function hasFeatureChanges(
+  config: FeatureConfig,
+  existing: FeatureDto,
+): boolean {
   if (config.displayName !== existing.displayName) return true;
-  if (normalizeValue(config.description) !== normalizeValue(existing.description)) return true;
+  if (
+    normalizeValue(config.description) !== normalizeValue(existing.description)
+  )
+    return true;
   if (config.valueType !== existing.valueType) return true;
   if (config.defaultValue !== existing.defaultValue) return true;
-  if (normalizeValue(config.groupName) !== normalizeValue(existing.groupName)) return true;
-  if (!deepEqual(config.validator ?? null, existing.validator ?? null)) return true;
-  if (!deepEqual(config.metadata ?? null, existing.metadata ?? null)) return true;
+  if (
+    config.meteredConfig &&
+    !deepEqual(config.meteredConfig, existing.meteredConfig)
+  )
+    return true;
+  if (normalizeValue(config.groupName) !== normalizeValue(existing.groupName))
+    return true;
+  if (!deepEqual(config.validator ?? null, existing.validator ?? null))
+    return true;
+  if (!deepEqual(config.metadata ?? null, existing.metadata ?? null))
+    return true;
   return false;
 }
 
 /**
  * Compare product config with existing product DTO to detect changes
  */
-function hasProductChanges(config: ProductConfig, existing: ProductDto): boolean {
+function hasProductChanges(
+  config: ProductConfig,
+  existing: ProductDto,
+): boolean {
   if (config.displayName !== existing.displayName) return true;
-  if (normalizeValue(config.description) !== normalizeValue(existing.description)) return true;
-  if (!deepEqual(config.metadata ?? null, existing.metadata ?? null)) return true;
+  if (
+    normalizeValue(config.description) !== normalizeValue(existing.description)
+  )
+    return true;
+  if (!deepEqual(config.metadata ?? null, existing.metadata ?? null))
+    return true;
   return false;
 }
 
@@ -78,21 +119,39 @@ function hasProductChanges(config: ProductConfig, existing: ProductDto): boolean
  */
 function hasPlanChanges(config: PlanConfig, existing: PlanDto): boolean {
   if (config.displayName !== existing.displayName) return true;
-  if (normalizeValue(config.description) !== normalizeValue(existing.description)) return true;
-  if (normalizeValue(config.onExpireTransitionToBillingCycleKey) !== normalizeValue(existing.onExpireTransitionToBillingCycleKey)) return true;
-  if (!deepEqual(config.metadata ?? null, existing.metadata ?? null)) return true;
+  if (
+    normalizeValue(config.description) !== normalizeValue(existing.description)
+  )
+    return true;
+  if (
+    normalizeValue(config.onExpireTransitionToBillingCycleKey) !==
+    normalizeValue(existing.onExpireTransitionToBillingCycleKey)
+  )
+    return true;
+  if (!deepEqual(config.metadata ?? null, existing.metadata ?? null))
+    return true;
   return false;
 }
 
 /**
  * Compare billing cycle config with existing billing cycle DTO to detect changes
  */
-function hasBillingCycleChanges(config: BillingCycleConfig, existing: BillingCycleDto): boolean {
+function hasBillingCycleChanges(
+  config: BillingCycleConfig,
+  existing: BillingCycleDto,
+): boolean {
   if (config.displayName !== existing.displayName) return true;
-  if (normalizeValue(config.description) !== normalizeValue(existing.description)) return true;
+  if (
+    normalizeValue(config.description) !== normalizeValue(existing.description)
+  )
+    return true;
   if (config.durationValue !== existing.durationValue) return true;
   if (config.durationUnit !== existing.durationUnit) return true;
-  if (normalizeValue(config.externalProductId) !== normalizeValue(existing.externalProductId)) return true;
+  if (
+    normalizeValue(config.externalProductId) !==
+    normalizeValue(existing.externalProductId)
+  )
+    return true;
   return false;
 }
 
@@ -103,7 +162,8 @@ function hasBillingCycleChanges(config: BillingCycleConfig, existing: BillingCyc
  */
 export class ConfigSyncService {
   constructor(
-    private readonly subscrio: Subscrio  // Use public API methods
+    private readonly subscrio: Subscrio,
+    private readonly clock: Clock = systemClock,
   ) {}
 
   /**
@@ -114,17 +174,19 @@ export class ConfigSyncService {
   async syncFromFile(filePath: string): Promise<ConfigSyncReport> {
     try {
       // Read file, parse JSON, validate, then sync
-      const fileContent = await readFile(filePath, 'utf-8');
-      
+      const fileContent = await readFile(filePath, "utf-8");
+
       // Validate JSON property order before parsing
       validateConfigJsonPropertyOrder(fileContent);
-      
+
       const jsonData = JSON.parse(fileContent);
       const config = ConfigSyncDtoSchema.parse(jsonData);
       return await this.syncFromJson(config);
     } catch (error) {
       if (error instanceof Error) {
-        throw new ValidationError(`Failed to load configuration from file: ${error.message}`);
+        throw new ValidationError(
+          `Failed to load configuration from file: ${error.message}`,
+        );
       }
       throw error;
     }
@@ -139,6 +201,15 @@ export class ConfigSyncService {
     // Phase 1: Validate configuration schema
     // This will throw ValidationError if schema is invalid
     const validatedConfig = ConfigSyncDtoSchema.parse(config);
+    await validateAccountingConfig(
+      this.subscrio,
+      validatedConfig,
+      this.clock.now(),
+    );
+    const configurationBefore = await captureAccountingConfig(
+      this.subscrio,
+      validatedConfig,
+    );
 
     // Initialize sync report
     const report: ConfigSyncReport = {
@@ -148,54 +219,76 @@ export class ConfigSyncService {
       unarchived: { features: 0, products: 0, plans: 0, billingCycles: 0 },
       ignored: { features: 0, products: 0, plans: 0, billingCycles: 0 },
       errors: [],
-      warnings: []
+      warnings: [],
     };
 
     // Phase 2: Load Current State
     // Use maximum allowed limit to get as many entities as possible
     const existingProducts = await loadAllPages((offset, limit) =>
-      this.subscrio.products.listProducts({ limit, offset, sortOrder: 'asc' })
+      this.subscrio.products.listProducts({ limit, offset, sortOrder: "asc" }),
     );
     const existingFeatures = await loadAllPages((offset, limit) =>
-      this.subscrio.features.listFeatures({ limit, offset })
+      this.subscrio.features.listFeatures({ limit, offset }),
     );
     const existingPlans = await loadAllPages((offset, limit) =>
-      this.subscrio.plans.listPlans({ limit, offset, sortOrder: 'asc' })
+      this.subscrio.plans.listPlans({ limit, offset, sortOrder: "asc" }),
     );
     const existingBillingCycles = await loadAllPages((offset, limit) =>
-      this.subscrio.billingCycles.listBillingCycles({ limit, offset, sortOrder: 'asc' })
+      this.subscrio.billingCycles.listBillingCycles({
+        limit,
+        offset,
+        sortOrder: "asc",
+      }),
     );
 
     // Create lookup maps by key
-    const productsByKey = new Map(existingProducts.map(p => [p.key, p]));
-    const featuresByKey = new Map(existingFeatures.map(f => [f.key, f]));
+    const productsByKey = new Map(existingProducts.map((p) => [p.key, p]));
+    const featuresByKey = new Map(existingFeatures.map((f) => [f.key, f]));
     // Plan keys are globally unique across all products
-    const plansByKey = new Map(existingPlans.map(p => [p.key, p]));
+    const plansByKey = new Map(existingPlans.map((p) => [p.key, p]));
     // Billing cycle keys are globally unique across all plans
-    const billingCyclesByKey = new Map(existingBillingCycles.map(bc => [bc.key, bc]));
+    const billingCyclesByKey = new Map(
+      existingBillingCycles.map((bc) => [bc.key, bc]),
+    );
 
     // Track ignored entities (in database but not in config)
-    const configFeatureKeys = new Set(validatedConfig.features.map(f => f.key));
-    const configProductKeys = new Set(validatedConfig.products.map(p => p.key));
+    const configFeatureKeys = new Set(
+      validatedConfig.features.map((f) => f.key),
+    );
+    const configProductKeys = new Set(
+      validatedConfig.products.map((p) => p.key),
+    );
     const configPlanKeys = new Set(
-      validatedConfig.products.flatMap(p => (p.plans || []).map(plan => plan.key))
+      validatedConfig.products.flatMap((p) =>
+        (p.plans || []).map((plan) => plan.key),
+      ),
     );
     const configBillingCycleKeys = new Set(
-      validatedConfig.products.flatMap(p => 
-        (p.plans || []).flatMap(plan => (plan.billingCycles || []).map(bc => bc.key))
-      )
+      validatedConfig.products.flatMap((p) =>
+        (p.plans || []).flatMap((plan) =>
+          (plan.billingCycles || []).map((bc) => bc.key),
+        ),
+      ),
     );
 
-    report.ignored.features = existingFeatures.filter(f => !configFeatureKeys.has(f.key)).length;
-    report.ignored.products = existingProducts.filter(p => !configProductKeys.has(p.key)).length;
-    report.ignored.plans = existingPlans.filter(p => !configPlanKeys.has(p.key)).length;
-    report.ignored.billingCycles = existingBillingCycles.filter(bc => !configBillingCycleKeys.has(bc.key)).length;
+    report.ignored.features = existingFeatures.filter(
+      (f) => !configFeatureKeys.has(f.key),
+    ).length;
+    report.ignored.products = existingProducts.filter(
+      (p) => !configProductKeys.has(p.key),
+    ).length;
+    report.ignored.plans = existingPlans.filter(
+      (p) => !configPlanKeys.has(p.key),
+    ).length;
+    report.ignored.billingCycles = existingBillingCycles.filter(
+      (bc) => !configBillingCycleKeys.has(bc.key),
+    ).length;
 
     // Phase 3: Sync Features (Independent Entities)
     for (const featureConfig of validatedConfig.features) {
       try {
         const existing = featuresByKey.get(featureConfig.key);
-        
+
         if (!existing) {
           // Create new feature
           const createDto: CreateFeatureDto = {
@@ -205,13 +298,14 @@ export class ConfigSyncService {
             valueType: featureConfig.valueType,
             defaultValue: featureConfig.defaultValue,
             groupName: featureConfig.groupName,
+            meteredConfig: featureConfig.meteredConfig,
             validator: featureConfig.validator,
-            metadata: featureConfig.metadata
+            metadata: featureConfig.metadata,
           };
-          
+
           await this.subscrio.features.createFeature(createDto);
           report.created.features++;
-          
+
           // Archive if needed
           if (featureConfig.archived === true) {
             await this.subscrio.features.archiveFeature(featureConfig.key);
@@ -220,10 +314,12 @@ export class ConfigSyncService {
         } else {
           // Check if entity needs updating
           const needsUpdate = hasFeatureChanges(featureConfig, existing);
-          
+
           if (needsUpdate) {
-            const updateDto: UpdateFeatureDto = {};
-            
+            const updateDto: UpdateFeatureDto = {
+              meteredConfig: featureConfig.meteredConfig,
+            };
+
             // Only include fields that are explicitly provided in config
             if (featureConfig.displayName !== undefined) {
               updateDto.displayName = featureConfig.displayName;
@@ -246,13 +342,16 @@ export class ConfigSyncService {
             if (featureConfig.metadata !== undefined) {
               updateDto.metadata = featureConfig.metadata;
             }
-            
-            await this.subscrio.features.updateFeature(featureConfig.key, updateDto);
+
+            await this.subscrio.features.updateFeature(
+              featureConfig.key,
+              updateDto,
+            );
             report.updated.features++;
           }
-          
+
           // Handle archive status
-          const isArchived = existing.status === 'archived';
+          const isArchived = existing.status === "archived";
           if (featureConfig.archived === true && !isArchived) {
             await this.subscrio.features.archiveFeature(featureConfig.key);
             report.archived.features++;
@@ -263,9 +362,9 @@ export class ConfigSyncService {
         }
       } catch (error) {
         report.errors.push({
-          entityType: 'feature',
+          entityType: "feature",
           key: featureConfig.key,
-          message: error instanceof Error ? error.message : String(error)
+          message: error instanceof Error ? error.message : String(error),
         });
       }
     }
@@ -274,28 +373,28 @@ export class ConfigSyncService {
     for (const productConfig of validatedConfig.products) {
       try {
         const existing = productsByKey.get(productConfig.key);
-        
+
         if (!existing) {
           const createDto: CreateProductDto = {
             key: productConfig.key,
             displayName: productConfig.displayName,
             description: productConfig.description,
-            metadata: productConfig.metadata
+            metadata: productConfig.metadata,
           };
-          
+
           await this.subscrio.products.createProduct(createDto);
           report.created.products++;
-          
+
           if (productConfig.archived === true) {
             await this.subscrio.products.archiveProduct(productConfig.key);
             report.archived.products++;
           }
         } else {
           const needsUpdate = hasProductChanges(productConfig, existing);
-          
+
           if (needsUpdate) {
             const updateDto: UpdateProductDto = {};
-            
+
             if (productConfig.displayName !== undefined) {
               updateDto.displayName = productConfig.displayName;
             }
@@ -305,12 +404,15 @@ export class ConfigSyncService {
             if (productConfig.metadata !== undefined) {
               updateDto.metadata = productConfig.metadata;
             }
-            
-            await this.subscrio.products.updateProduct(productConfig.key, updateDto);
+
+            await this.subscrio.products.updateProduct(
+              productConfig.key,
+              updateDto,
+            );
             report.updated.products++;
           }
-          
-          const isArchived = existing.status === 'archived';
+
+          const isArchived = existing.status === "archived";
           if (productConfig.archived === true && !isArchived) {
             await this.subscrio.products.archiveProduct(productConfig.key);
             report.archived.products++;
@@ -322,42 +424,56 @@ export class ConfigSyncService {
 
         if (productConfig.features) {
           try {
-            const currentFeatures = await this.subscrio.features.getFeaturesByProduct(productConfig.key);
-            const currentFeatureKeys = new Set(currentFeatures.map(f => f.key));
+            const currentFeatures =
+              await this.subscrio.features.getFeaturesByProduct(
+                productConfig.key,
+              );
+            const currentFeatureKeys = new Set(
+              currentFeatures.map((f) => f.key),
+            );
             const configFeatureKeys = new Set(productConfig.features);
 
             for (const featureKey of productConfig.features) {
               if (!currentFeatureKeys.has(featureKey)) {
-                await this.subscrio.products.associateFeature(productConfig.key, featureKey);
+                await this.subscrio.products.associateFeature(
+                  productConfig.key,
+                  featureKey,
+                );
               }
             }
 
             for (const feature of currentFeatures) {
               if (!configFeatureKeys.has(feature.key)) {
-                await this.subscrio.products.dissociateFeature(productConfig.key, feature.key);
+                await this.subscrio.products.dissociateFeature(
+                  productConfig.key,
+                  feature.key,
+                );
               }
             }
           } catch (error) {
             report.errors.push({
-              entityType: 'product',
+              entityType: "product",
               key: productConfig.key,
-              message: `Failed to sync feature associations: ${error instanceof Error ? error.message : String(error)}`
+              message: `Failed to sync feature associations: ${error instanceof Error ? error.message : String(error)}`,
             });
           }
         }
       } catch (error) {
         report.errors.push({
-          entityType: 'product',
+          entityType: "product",
           key: productConfig.key,
-          message: error instanceof Error ? error.message : String(error)
+          message: error instanceof Error ? error.message : String(error),
         });
       }
     }
 
     // Phase 5: Sync Plans (Dependent on Products)
     // Track plans that need onExpireTransitionToBillingCycleKey set after billing cycles are created
-    const plansPendingTransitionKey: Array<{ planKey: string; transitionKey: string }> = [];
-    
+    const plansPendingTransitionKey: Array<{
+      planKey: string;
+      transitionKey: string;
+    }> = [];
+
     for (const productConfig of validatedConfig.products) {
       if (!productConfig.plans) continue;
 
@@ -365,22 +481,25 @@ export class ConfigSyncService {
         try {
           // Plan keys are globally unique, so lookup by key only
           const existing = plansByKey.get(planConfig.key);
-          
+
           // Check if billing cycle exists in database or will be created in this config
-          const transitionBillingCycleKey = planConfig.onExpireTransitionToBillingCycleKey;
+          const transitionBillingCycleKey =
+            planConfig.onExpireTransitionToBillingCycleKey;
           const transitionBillingCycleExistsInDb = transitionBillingCycleKey
             ? billingCyclesByKey.has(transitionBillingCycleKey)
             : false;
-          
+
           // Check if billing cycle exists in config (will be created in this sync)
           const transitionBillingCycleExistsInConfig = transitionBillingCycleKey
-            ? validatedConfig.products.some(p => 
-                p.plans?.some(plan => 
-                  plan.billingCycles?.some(bc => bc.key === transitionBillingCycleKey)
-                )
+            ? validatedConfig.products.some((p) =>
+                p.plans?.some((plan) =>
+                  plan.billingCycles?.some(
+                    (bc) => bc.key === transitionBillingCycleKey,
+                  ),
+                ),
               )
             : false;
-          
+
           if (!existing) {
             // Create new plan
             const createDto: CreatePlanDto = {
@@ -388,26 +507,34 @@ export class ConfigSyncService {
               key: planConfig.key,
               displayName: planConfig.displayName,
               description: planConfig.description,
-              metadata: planConfig.metadata
+              metadata: planConfig.metadata,
             };
-            
+
             // Only set onExpireTransitionToBillingCycleKey if billing cycle already exists in database
             // If it only exists in config, we'll set it after billing cycles are created
-            if (transitionBillingCycleExistsInDb && planConfig.onExpireTransitionToBillingCycleKey) {
-              createDto.onExpireTransitionToBillingCycleKey = planConfig.onExpireTransitionToBillingCycleKey;
+            if (
+              transitionBillingCycleExistsInDb &&
+              planConfig.onExpireTransitionToBillingCycleKey
+            ) {
+              createDto.onExpireTransitionToBillingCycleKey =
+                planConfig.onExpireTransitionToBillingCycleKey;
             }
-            
+
             await this.subscrio.plans.createPlan(createDto);
             report.created.plans++;
-            
+
             // If billing cycle doesn't exist in DB yet but exists in config, defer setting the transition key
-            if (planConfig.onExpireTransitionToBillingCycleKey && !transitionBillingCycleExistsInDb && transitionBillingCycleExistsInConfig) {
+            if (
+              planConfig.onExpireTransitionToBillingCycleKey &&
+              !transitionBillingCycleExistsInDb &&
+              transitionBillingCycleExistsInConfig
+            ) {
               plansPendingTransitionKey.push({
                 planKey: planConfig.key,
-                transitionKey: planConfig.onExpireTransitionToBillingCycleKey
+                transitionKey: planConfig.onExpireTransitionToBillingCycleKey,
               });
             }
-            
+
             // Archive if needed
             if (planConfig.archived === true) {
               await this.subscrio.plans.archivePlan(planConfig.key);
@@ -416,10 +543,10 @@ export class ConfigSyncService {
           } else {
             // Check if entity needs updating
             const needsUpdate = hasPlanChanges(planConfig, existing);
-            
+
             if (needsUpdate) {
               const updateDto: UpdatePlanDto = {};
-              
+
               // Only include fields that are explicitly provided in config
               if (planConfig.displayName !== undefined) {
                 updateDto.displayName = planConfig.displayName;
@@ -429,13 +556,17 @@ export class ConfigSyncService {
               }
               // Only set onExpireTransitionToBillingCycleKey if billing cycle exists in database
               // If it only exists in config, defer until after billing cycles are created
-              if (planConfig.onExpireTransitionToBillingCycleKey !== undefined) {
+              if (
+                planConfig.onExpireTransitionToBillingCycleKey !== undefined
+              ) {
                 if (transitionBillingCycleExistsInDb) {
-                  updateDto.onExpireTransitionToBillingCycleKey = planConfig.onExpireTransitionToBillingCycleKey;
+                  updateDto.onExpireTransitionToBillingCycleKey =
+                    planConfig.onExpireTransitionToBillingCycleKey;
                 } else if (transitionBillingCycleExistsInConfig) {
                   plansPendingTransitionKey.push({
                     planKey: planConfig.key,
-                    transitionKey: planConfig.onExpireTransitionToBillingCycleKey
+                    transitionKey:
+                      planConfig.onExpireTransitionToBillingCycleKey,
                   });
                 }
               } else if (existing.onExpireTransitionToBillingCycleKey) {
@@ -444,25 +575,33 @@ export class ConfigSyncService {
               if (planConfig.metadata !== undefined) {
                 updateDto.metadata = planConfig.metadata;
               }
-              
+
               // Only update if there are fields to update
               if (Object.keys(updateDto).length > 0) {
                 await this.subscrio.plans.updatePlan(planConfig.key, updateDto);
                 report.updated.plans++;
               }
-            } else if (planConfig.onExpireTransitionToBillingCycleKey !== undefined && !transitionBillingCycleExistsInDb && transitionBillingCycleExistsInConfig) {
+            } else if (
+              planConfig.onExpireTransitionToBillingCycleKey !== undefined &&
+              !transitionBillingCycleExistsInDb &&
+              transitionBillingCycleExistsInConfig
+            ) {
               // Even if no other changes, we may need to defer setting the transition key
-              const currentTransitionKey = existing.onExpireTransitionToBillingCycleKey;
-              if (currentTransitionKey !== planConfig.onExpireTransitionToBillingCycleKey) {
+              const currentTransitionKey =
+                existing.onExpireTransitionToBillingCycleKey;
+              if (
+                currentTransitionKey !==
+                planConfig.onExpireTransitionToBillingCycleKey
+              ) {
                 plansPendingTransitionKey.push({
                   planKey: planConfig.key,
-                  transitionKey: planConfig.onExpireTransitionToBillingCycleKey
+                  transitionKey: planConfig.onExpireTransitionToBillingCycleKey,
                 });
               }
             }
-            
+
             // Handle archive status
-            const isArchived = existing.status === 'archived';
+            const isArchived = existing.status === "archived";
             if (planConfig.archived === true && !isArchived) {
               await this.subscrio.plans.archivePlan(planConfig.key);
               report.archived.plans++;
@@ -475,49 +614,64 @@ export class ConfigSyncService {
           // Sync plan feature values
           if (planConfig.featureValues) {
             try {
-              const currentPlanFeatures = await this.subscrio.plans.getPlanFeatures(planConfig.key);
-              const currentFeatureMap = new Map(currentPlanFeatures.map(f => [f.featureKey, f.value]));
-              const configFeatureKeys = new Set(Object.keys(planConfig.featureValues));
+              const currentPlanFeatures =
+                await this.subscrio.plans.getPlanFeatures(planConfig.key);
+              const currentFeatureMap = new Map(
+                currentPlanFeatures.map((f) => [f.featureKey, f.value]),
+              );
+              const configFeatureKeys = new Set(
+                Object.keys(planConfig.featureValues),
+              );
 
               // Set feature values in config (only if changed)
-              for (const [featureKey, value] of Object.entries(planConfig.featureValues)) {
+              for (const [featureKey, value] of Object.entries(
+                planConfig.featureValues,
+              )) {
                 const currentValue = currentFeatureMap.get(featureKey);
-                
+
                 // Only update if value changed
                 if (currentValue !== value) {
-                  const feature = await this.subscrio.features.getFeature(featureKey);
+                  const feature =
+                    await this.subscrio.features.getFeature(featureKey);
                   if (!feature) {
                     report.warnings.push({
-                      entityType: 'plan',
+                      entityType: "plan",
                       key: planConfig.key,
-                      message: `Feature '${featureKey}' not found, skipping feature value`
+                      message: `Feature '${featureKey}' not found, skipping feature value`,
                     });
                     continue;
                   }
-                  
-                  await this.subscrio.plans.setFeatureValue(planConfig.key, featureKey, value);
+
+                  await this.subscrio.plans.setFeatureValue(
+                    planConfig.key,
+                    featureKey,
+                    value,
+                  );
                 }
               }
 
               // Remove feature values not in config
               for (const planFeature of currentPlanFeatures) {
                 if (!configFeatureKeys.has(planFeature.featureKey)) {
-                  await this.subscrio.plans.removeFeatureValue(planConfig.key, planFeature.featureKey);
+                  await this.subscrio.plans.removeFeatureValue(
+                    planConfig.key,
+                    planFeature.featureKey,
+                  );
                 }
               }
             } catch (error) {
               report.errors.push({
-                entityType: 'plan',
+                entityType: "plan",
                 key: planConfig.key,
-                message: `Failed to sync feature values: ${error instanceof Error ? error.message : String(error)}`
+                message: `Failed to sync feature values: ${error instanceof Error ? error.message : String(error)}`,
               });
             }
           }
         } catch (error) {
           report.errors.push({
-            entityType: 'plan',
+            entityType: "plan",
             key: planConfig.key,
-            message: error instanceof Error ? error.message : String(error)
+            message: error instanceof Error ? error.message : String(error),
           });
         }
       }
@@ -534,7 +688,7 @@ export class ConfigSyncService {
           try {
             // Billing cycle keys are globally unique, so lookup by key only
             const existing = billingCyclesByKey.get(billingCycleConfig.key);
-            
+
             if (!existing) {
               // Create new billing cycle
               const createDto: CreateBillingCycleDto = {
@@ -544,49 +698,61 @@ export class ConfigSyncService {
                 description: billingCycleConfig.description,
                 durationValue: billingCycleConfig.durationValue,
                 durationUnit: billingCycleConfig.durationUnit,
-                externalProductId: billingCycleConfig.externalProductId
+                externalProductId: billingCycleConfig.externalProductId,
               };
-              
+
               await this.subscrio.billingCycles.createBillingCycle(createDto);
               report.created.billingCycles++;
-              
+
               // Archive if needed
               if (billingCycleConfig.archived === true) {
-                await this.subscrio.billingCycles.archiveBillingCycle(billingCycleConfig.key);
+                await this.subscrio.billingCycles.archiveBillingCycle(
+                  billingCycleConfig.key,
+                );
                 report.archived.billingCycles++;
               }
             } else {
               // Check if entity needs updating
-              const needsUpdate = hasBillingCycleChanges(billingCycleConfig, existing);
-              
+              const needsUpdate = hasBillingCycleChanges(
+                billingCycleConfig,
+                existing,
+              );
+
               if (needsUpdate) {
                 const updateDto: UpdateBillingCycleDto = {
                   displayName: billingCycleConfig.displayName,
                   description: billingCycleConfig.description,
                   durationValue: billingCycleConfig.durationValue,
                   durationUnit: billingCycleConfig.durationUnit,
-                  externalProductId: billingCycleConfig.externalProductId
+                  externalProductId: billingCycleConfig.externalProductId,
                 };
-                
-                await this.subscrio.billingCycles.updateBillingCycle(billingCycleConfig.key, updateDto);
+
+                await this.subscrio.billingCycles.updateBillingCycle(
+                  billingCycleConfig.key,
+                  updateDto,
+                );
                 report.updated.billingCycles++;
               }
-              
+
               // Handle archive status
-              const isArchived = existing.status === 'archived';
+              const isArchived = existing.status === "archived";
               if (billingCycleConfig.archived === true && !isArchived) {
-                await this.subscrio.billingCycles.archiveBillingCycle(billingCycleConfig.key);
+                await this.subscrio.billingCycles.archiveBillingCycle(
+                  billingCycleConfig.key,
+                );
                 report.archived.billingCycles++;
               } else if (billingCycleConfig.archived === false && isArchived) {
-                await this.subscrio.billingCycles.unarchiveBillingCycle(billingCycleConfig.key);
+                await this.subscrio.billingCycles.unarchiveBillingCycle(
+                  billingCycleConfig.key,
+                );
                 report.unarchived.billingCycles++;
               }
             }
           } catch (error) {
             report.errors.push({
-              entityType: 'billingCycle',
+              entityType: "billingCycle",
               key: billingCycleConfig.key,
-              message: error instanceof Error ? error.message : String(error)
+              message: error instanceof Error ? error.message : String(error),
             });
           }
         }
@@ -598,28 +764,36 @@ export class ConfigSyncService {
     for (const { planKey, transitionKey } of plansPendingTransitionKey) {
       try {
         // Verify billing cycle now exists
-        const billingCycle = await this.subscrio.billingCycles.getBillingCycle(transitionKey);
+        const billingCycle =
+          await this.subscrio.billingCycles.getBillingCycle(transitionKey);
         if (billingCycle) {
           await this.subscrio.plans.updatePlan(planKey, {
-            onExpireTransitionToBillingCycleKey: transitionKey
+            onExpireTransitionToBillingCycleKey: transitionKey,
           });
         } else {
           report.errors.push({
-            entityType: 'plan',
+            entityType: "plan",
             key: planKey,
-            message: `Billing cycle key '${transitionKey}' referenced in onExpireTransitionToBillingCycleKey does not exist`
+            message: `Billing cycle key '${transitionKey}' referenced in onExpireTransitionToBillingCycleKey does not exist`,
           });
         }
       } catch (error) {
         report.errors.push({
-          entityType: 'plan',
+          entityType: "plan",
           key: planKey,
-          message: `Failed to set onExpireTransitionToBillingCycleKey: ${error instanceof Error ? error.message : String(error)}`
+          message: `Failed to set onExpireTransitionToBillingCycleKey: ${error instanceof Error ? error.message : String(error)}`,
         });
       }
     }
 
+    await syncAccountingConfig(this.subscrio, validatedConfig, report);
+    report.details = compareAccountingConfig(
+      configurationBefore,
+      await captureAccountingConfig(this.subscrio, validatedConfig),
+    );
     return report;
   }
+  async exportConfig(subscriptionKeys: string[] = []): Promise<ConfigSyncDto> {
+    return exportConfig(this.subscrio, subscriptionKeys);
+  }
 }
-

@@ -1,14 +1,16 @@
-import { ISubscriptionRepository } from '../repositories/ISubscriptionRepository.js';
-import { IPlanRepository } from '../repositories/IPlanRepository.js';
-import { IFeatureRepository } from '../repositories/IFeatureRepository.js';
-import { ICustomerRepository } from '../repositories/ICustomerRepository.js';
-import { IProductRepository } from '../repositories/IProductRepository.js';
-import { FeatureValueResolver } from '../../domain/services/FeatureValueResolver.js';
-import { SubscriptionStatus } from '../../domain/value-objects/SubscriptionStatus.js';
-import { NotFoundError } from '../errors/index.js';
-import { MAX_SUBSCRIPTIONS_PER_CUSTOMER } from '../constants/index.js';
-import { convertFeatureValue } from '../utils/convertFeatureValue.js';
-import type { Subscription } from '../../domain/entities/Subscription.js';
+import { FeatureResolutionQuery } from "./FeatureResolutionQuery.js";
+import type { FeatureValueExplanationDto } from "../dtos/FeatureResolutionDto.js";
+import { ISubscriptionRepository } from "../repositories/ISubscriptionRepository.js";
+import { IPlanRepository } from "../repositories/IPlanRepository.js";
+import { IFeatureRepository } from "../repositories/IFeatureRepository.js";
+import { ICustomerRepository } from "../repositories/ICustomerRepository.js";
+import { IProductRepository } from "../repositories/IProductRepository.js";
+import { FeatureValueResolver } from "../../domain/services/FeatureValueResolver.js";
+import { SubscriptionStatus } from "../../domain/value-objects/SubscriptionStatus.js";
+import { NotFoundError } from "../errors/index.js";
+import { MAX_SUBSCRIPTIONS_PER_CUSTOMER } from "../constants/index.js";
+import { convertFeatureValue } from "../utils/convertFeatureValue.js";
+import type { Subscription } from "../../domain/entities/Subscription.js";
 
 export class FeatureCheckerService {
   private readonly resolver: FeatureValueResolver;
@@ -18,7 +20,8 @@ export class FeatureCheckerService {
     private readonly planRepository: IPlanRepository,
     private readonly featureRepository: IFeatureRepository,
     private readonly customerRepository: ICustomerRepository,
-    private readonly productRepository: IProductRepository
+    private readonly productRepository: IProductRepository,
+    private readonly resolutionQuery?: FeatureResolutionQuery,
   ) {
     this.resolver = new FeatureValueResolver();
   }
@@ -34,9 +37,10 @@ export class FeatureCheckerService {
   async getValueForSubscription<T = string>(
     subscriptionKey: string,
     featureKey: string,
-    defaultValue?: T
+    defaultValue?: T,
   ): Promise<T | null> {
-    const subscription = await this.subscriptionRepository.findByKey(subscriptionKey);
+    const subscription =
+      await this.subscriptionRepository.findByKey(subscriptionKey);
     if (!subscription) {
       return defaultValue ?? null;
     }
@@ -53,6 +57,20 @@ export class FeatureCheckerService {
       return defaultValue ?? null;
     }
 
+    if (this.resolutionQuery) {
+      const customer = await this.customerRepository.findById(
+        subscription.customerId,
+      );
+      if (customer) {
+        const explanation = await this.resolutionQuery.explain(
+          customer.key,
+          plan.productKey,
+          featureKey,
+          subscriptionKey,
+        );
+        return convertFeatureValue(explanation.effectiveValue, defaultValue);
+      }
+    }
     // Resolve using hierarchy
     const value = this.resolver.resolve(feature, plan, subscription);
     return convertFeatureValue(value, defaultValue);
@@ -66,21 +84,27 @@ export class FeatureCheckerService {
    */
   async isEnabledForSubscription(
     subscriptionKey: string,
-    featureKey: string
+    featureKey: string,
   ): Promise<boolean> {
-    const value = await this.getValueForSubscription(subscriptionKey, featureKey);
-    return value?.toLowerCase() === 'true';
+    const value = await this.getValueForSubscription(
+      subscriptionKey,
+      featureKey,
+    );
+    return value?.toLowerCase() === "true";
   }
 
   /**
    * Get all feature values for a specific subscription
    */
   async getAllFeaturesForSubscription(
-    subscriptionKey: string
+    subscriptionKey: string,
   ): Promise<Map<string, string>> {
-    const subscription = await this.subscriptionRepository.findByKey(subscriptionKey);
+    const subscription =
+      await this.subscriptionRepository.findByKey(subscriptionKey);
     if (!subscription) {
-      throw new NotFoundError(`Subscription with key '${subscriptionKey}' not found`);
+      throw new NotFoundError(
+        `Subscription with key '${subscriptionKey}' not found`,
+      );
     }
 
     // Get plan
@@ -93,7 +117,9 @@ export class FeatureCheckerService {
     // Get product to find features
     const product = await this.productRepository.findByKey(plan.productKey);
     if (!product) {
-      throw new NotFoundError(`Product with key '${plan.productKey}' not found`);
+      throw new NotFoundError(
+        `Product with key '${plan.productKey}' not found`,
+      );
     }
 
     // Product from repository always has ID (BIGSERIAL PRIMARY KEY)
@@ -102,9 +128,14 @@ export class FeatureCheckerService {
 
     // Resolve features for this specific subscription
     const resolved = new Map<string, string>();
-    
+
     for (const feature of features) {
-      const value = this.resolver.resolve(feature, plan, subscription);
+      const value = this.resolutionQuery
+        ? ((await this.getValueForSubscription<string>(
+            subscriptionKey,
+            feature.key,
+          )) ?? feature.defaultValue)
+        : this.resolver.resolve(feature, plan, subscription);
       resolved.set(feature.key, value);
     }
 
@@ -124,7 +155,7 @@ export class FeatureCheckerService {
     customerKey: string,
     productKey: string,
     featureKey: string,
-    defaultValue?: T
+    defaultValue?: T,
   ): Promise<T | null> {
     // Find customer
     const customer = await this.customerRepository.findByKey(customerKey);
@@ -144,24 +175,37 @@ export class FeatureCheckerService {
       return defaultValue ?? null;
     }
 
+    if (this.resolutionQuery) {
+      const explanation = await this.resolutionQuery.explain(
+        customerKey,
+        productKey,
+        featureKey,
+      );
+      return convertFeatureValue(explanation.effectiveValue, defaultValue);
+    }
     // Entities from repository always have IDs (BIGSERIAL PRIMARY KEY)
     // Get active subscriptions for this customer
     const subscriptions = await this.subscriptionRepository.findByCustomerId(
       customer.id!,
-      { limit: MAX_SUBSCRIPTIONS_PER_CUSTOMER, offset: 0 }
+      { limit: MAX_SUBSCRIPTIONS_PER_CUSTOMER, offset: 0 },
     );
 
     // Batch load all plans to avoid N+1 queries
-    const planIds = subscriptions.map(s => s.planId);
+    const planIds = subscriptions.map((s) => s.planId);
     const plans = await this.planRepository.findByIds(planIds);
-    const planMap = new Map(plans.filter(p => p.id !== undefined).map(p => [p.id!, p]));
+    const planMap = new Map(
+      plans.filter((p) => p.id !== undefined).map((p) => [p.id!, p]),
+    );
 
     // Filter subscriptions for this product using in-memory map
-    const productSubscriptions = subscriptions.filter(subscription => {
+    const productSubscriptions = subscriptions.filter((subscription) => {
       const plan = planMap.get(subscription.planId);
       const status = subscription.status; // This returns a string from the getter
-      return plan && plan.productKey === productKey && 
-             (status === 'active' || status === 'trial');
+      return (
+        plan &&
+        plan.productKey === productKey &&
+        (status === "active" || status === "trial")
+      );
     });
 
     if (productSubscriptions.length === 0) {
@@ -179,7 +223,10 @@ export class FeatureCheckerService {
         break;
       }
 
-      if (plan?.getFeatureValue(feature.id!) != null && resolvedValue === feature.defaultValue) {
+      if (
+        plan?.getFeatureValue(feature.id!) != null &&
+        resolvedValue === feature.defaultValue
+      ) {
         resolvedValue = value;
       }
     }
@@ -193,10 +240,14 @@ export class FeatureCheckerService {
   async isEnabledForCustomer(
     customerKey: string,
     productKey: string,
-    featureKey: string
+    featureKey: string,
   ): Promise<boolean> {
-    const value = await this.getValueForCustomer(customerKey, productKey, featureKey);
-    return value?.toLowerCase() === 'true';
+    const value = await this.getValueForCustomer(
+      customerKey,
+      productKey,
+      featureKey,
+    );
+    return value?.toLowerCase() === "true";
   }
 
   /**
@@ -204,7 +255,7 @@ export class FeatureCheckerService {
    */
   async getAllFeaturesForCustomer(
     customerKey: string,
-    productKey: string
+    productKey: string,
   ): Promise<Map<string, string>> {
     const customer = await this.customerRepository.findByKey(customerKey);
     if (!customer) {
@@ -221,24 +272,39 @@ export class FeatureCheckerService {
     // Get all features for the product
     const features = await this.featureRepository.findByProduct(product.id!);
 
+    if (this.resolutionQuery) {
+      const resolved = new Map<string, string>();
+      for (const feature of features)
+        resolved.set(
+          feature.key,
+          (await this.resolutionQuery.explain(customerKey, productKey, feature.key))
+            .effectiveValue,
+        );
+      return resolved;
+    }
     // Customer from repository always has ID (BIGSERIAL PRIMARY KEY)
     // Get active subscriptions for this customer
     const subscriptions = await this.subscriptionRepository.findByCustomerId(
       customer.id!,
-      { limit: MAX_SUBSCRIPTIONS_PER_CUSTOMER, offset: 0 }
+      { limit: MAX_SUBSCRIPTIONS_PER_CUSTOMER, offset: 0 },
     );
 
     // Batch load all plans to avoid N+1 queries
-    const planIds = subscriptions.map(s => s.planId);
+    const planIds = subscriptions.map((s) => s.planId);
     const plans = await this.planRepository.findByIds(planIds);
-    const planMap = new Map(plans.filter(p => p.id !== undefined).map(p => [p.id!, p]));
+    const planMap = new Map(
+      plans.filter((p) => p.id !== undefined).map((p) => [p.id!, p]),
+    );
 
     // Filter subscriptions for this product using in-memory map
-    const productSubscriptions = subscriptions.filter(subscription => {
+    const productSubscriptions = subscriptions.filter((subscription) => {
       const plan = planMap.get(subscription.planId);
       const status = subscription.status; // This returns a string from the getter
-      return plan && plan.productKey === productKey && 
-             (status === 'active' || status === 'trial');
+      return (
+        plan &&
+        plan.productKey === productKey &&
+        (status === "active" || status === "trial")
+      );
     });
 
     if (productSubscriptions.length === 0) {
@@ -260,7 +326,7 @@ export class FeatureCheckerService {
   async hasPlanAccess(
     customerKey: string,
     productKey: string,
-    planKey: string
+    planKey: string,
   ): Promise<boolean> {
     const customer = await this.customerRepository.findByKey(customerKey);
     if (!customer) {
@@ -283,12 +349,11 @@ export class FeatureCheckerService {
 
     const subscriptions = await this.subscriptionRepository.findByCustomerId(
       customer.id!,
-      { limit: MAX_SUBSCRIPTIONS_PER_CUSTOMER, offset: 0 }
+      { limit: MAX_SUBSCRIPTIONS_PER_CUSTOMER, offset: 0 },
     );
 
-    return subscriptions.some(s =>
-      s.planId === plan.id! &&
-      this.isActiveOrTrial(s)
+    return subscriptions.some(
+      (s) => s.planId === plan.id! && this.isActiveOrTrial(s),
     );
   }
 
@@ -304,14 +369,16 @@ export class FeatureCheckerService {
     // Customer from repository always has ID (BIGSERIAL PRIMARY KEY)
     const subscriptions = await this.subscriptionRepository.findByCustomerId(
       customer.id!,
-      { limit: MAX_SUBSCRIPTIONS_PER_CUSTOMER, offset: 0 }
+      { limit: MAX_SUBSCRIPTIONS_PER_CUSTOMER, offset: 0 },
     );
 
-    const activeSubscriptions = subscriptions.filter((s) => this.isActiveOrTrial(s));
-    const planIds = [...new Set(activeSubscriptions.map(s => s.planId))];
+    const activeSubscriptions = subscriptions.filter((s) =>
+      this.isActiveOrTrial(s),
+    );
+    const planIds = [...new Set(activeSubscriptions.map((s) => s.planId))];
     const plans = await this.planRepository.findByIds(planIds);
 
-    return [...new Set(plans.map(plan => plan.key))];
+    return [...new Set(plans.map((plan) => plan.key))];
   }
 
   /**
@@ -319,12 +386,13 @@ export class FeatureCheckerService {
    */
   async getFeatureUsageSummary(
     customerKey: string,
-    productKey: string
+    productKey: string,
   ): Promise<{
     activeSubscriptions: number;
     enabledFeatures: string[];
     disabledFeatures: string[];
     numericFeatures: Map<string, number>;
+    meteredFeatures: Map<string, number>;
     textFeatures: Map<string, string>;
   }> {
     const customer = await this.customerRepository.findByKey(customerKey);
@@ -334,23 +402,27 @@ export class FeatureCheckerService {
     if (customer && product) {
       const subscriptions = await this.subscriptionRepository.findByCustomerId(
         customer.id!,
-        { limit: MAX_SUBSCRIPTIONS_PER_CUSTOMER, offset: 0 }
+        { limit: MAX_SUBSCRIPTIONS_PER_CUSTOMER, offset: 0 },
       );
-      const planIds = [...new Set(subscriptions.map(s => s.planId))];
+      const planIds = [...new Set(subscriptions.map((s) => s.planId))];
       const plans = await this.planRepository.findByIds(planIds);
       const productPlanIds = new Set(
-        plans.filter(p => p.productKey === productKey).map(p => p.id!)
+        plans.filter((p) => p.productKey === productKey).map((p) => p.id!),
       );
-      activeSubscriptions = subscriptions.filter(s =>
-        productPlanIds.has(s.planId) && this.isActiveOrTrial(s)
+      activeSubscriptions = subscriptions.filter(
+        (s) => productPlanIds.has(s.planId) && this.isActiveOrTrial(s),
       ).length;
     }
 
-    const allFeatures = await this.getAllFeaturesForCustomer(customerKey, productKey);
+    const allFeatures = await this.getAllFeaturesForCustomer(
+      customerKey,
+      productKey,
+    );
 
     const enabledFeatures: string[] = [];
     const disabledFeatures: string[] = [];
     const numericFeatures = new Map<string, number>();
+    const meteredFeatures = new Map<string, number>();
     const textFeatures = new Map<string, string>();
 
     if (!product) {
@@ -359,31 +431,35 @@ export class FeatureCheckerService {
         enabledFeatures,
         disabledFeatures,
         numericFeatures,
-        textFeatures
+        meteredFeatures,
+        textFeatures,
       };
     }
 
     const features = await this.featureRepository.findByProduct(product.id!);
-    const featureTypeMap = new Map(features.map(f => [f.key, f.valueType]));
+    const featureTypeMap = new Map(features.map((f) => [f.key, f.valueType]));
 
     for (const [featureKey, value] of allFeatures) {
       const valueType = featureTypeMap.get(featureKey);
-      
+
       switch (valueType) {
-        case 'toggle':
-          if (value.toLowerCase() === 'true') {
+        case "toggle":
+          if (value.toLowerCase() === "true") {
             enabledFeatures.push(featureKey);
           } else {
             disabledFeatures.push(featureKey);
           }
           break;
-        case 'numeric':
+        case "metered":
+          meteredFeatures.set(featureKey, Number(value));
+          break;
+        case "numeric":
           const num = Number(value);
           if (!isNaN(num) && isFinite(num)) {
             numericFeatures.set(featureKey, num);
           }
           break;
-        case 'text':
+        case "text":
           textFeatures.set(featureKey, value);
           break;
       }
@@ -394,14 +470,43 @@ export class FeatureCheckerService {
       enabledFeatures,
       disabledFeatures,
       numericFeatures,
-      textFeatures
+      meteredFeatures,
+      textFeatures,
     };
   }
 
+  async explainForCustomer(
+    customerKey: string,
+    productKey: string,
+    featureKey: string,
+  ): Promise<FeatureValueExplanationDto> {
+    if (!this.resolutionQuery) throw new Error("Feature resolution is unavailable");
+    return this.resolutionQuery.explain(customerKey, productKey, featureKey);
+  }
+  async explainForSubscription(
+    subscriptionKey: string,
+    featureKey: string,
+  ): Promise<FeatureValueExplanationDto> {
+    const s = await this.subscriptionRepository.findByKey(subscriptionKey);
+    if (!s) throw new NotFoundError("Subscription not found");
+    const p = await this.planRepository.findById(s.planId),
+      c = await this.customerRepository.findById(s.customerId);
+    if (!p || !c || !this.resolutionQuery)
+      throw new NotFoundError("Subscription context not found");
+    return this.resolutionQuery.explain(
+      c.key,
+      p.productKey,
+      featureKey,
+      subscriptionKey,
+    );
+  }
   private isActiveOrTrial(subscription: Subscription): boolean {
     const status = String(subscription.status).toLowerCase();
-    return status === SubscriptionStatus.Active || status === SubscriptionStatus.Trial
-      || status === 'active' || status === 'trial';
+    return (
+      status === SubscriptionStatus.Active ||
+      status === SubscriptionStatus.Trial ||
+      status === "active" ||
+      status === "trial"
+    );
   }
-
 }

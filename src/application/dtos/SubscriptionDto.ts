@@ -1,23 +1,31 @@
-import { z } from 'zod';
-import { CustomerDto } from './CustomerDto.js';
-import { paginationFields, sortOrderField } from './filterFields.js';
+import { z } from "zod";
+import { CustomerDto } from "./CustomerDto.js";
+import { paginationFields, sortOrderField } from "./filterFields.js";
 
 // Helper to transform empty strings to undefined for optional date fields
 const optionalDateField = () =>
   z.preprocess(
-    (val) => (val === '' || val === null ? undefined : val),
-    z.union([z.string().datetime(), z.date()]).optional()
+    (val) => (val === "" || val === null ? undefined : val),
+    z.union([z.string().datetime(), z.date()]).optional(),
   );
 
 export const CreateSubscriptionDtoSchema = z.object({
-  key: z.string()
-    .min(1, 'Subscription key is required')
-    .max(255, 'Subscription key too long')
-    .regex(/^[a-zA-Z0-9-_]+$/, 'Subscription key must be alphanumeric with hyphens/underscores'),
-  customerKey: z.string().min(1, 'Customer key is required'),
-  billingCycleKey: z.string()
-    .min(1, 'Billing cycle key is required')
-    .regex(/^[a-z0-9-]+$/, 'Billing cycle key must be lowercase alphanumeric with hyphens'),
+  key: z
+    .string()
+    .min(1, "Subscription key is required")
+    .max(255, "Subscription key too long")
+    .regex(
+      /^[a-zA-Z0-9-_]+$/,
+      "Subscription key must be alphanumeric with hyphens/underscores",
+    ),
+  customerKey: z.string().min(1, "Customer key is required"),
+  billingCycleKey: z
+    .string()
+    .min(1, "Billing cycle key is required")
+    .regex(
+      /^[a-z0-9-]+$/,
+      "Billing cycle key must be lowercase alphanumeric with hyphens",
+    ),
   activationDate: optionalDateField(),
   expirationDate: optionalDateField(),
   cancellationDate: optionalDateField(),
@@ -25,19 +33,23 @@ export const CreateSubscriptionDtoSchema = z.object({
   currentPeriodStart: optionalDateField(),
   currentPeriodEnd: optionalDateField(),
   stripeSubscriptionId: z.preprocess(
-    (val) => (val === '' ? undefined : val),
-    z.string().optional()
+    (val) => (val === "" ? undefined : val),
+    z.string().optional(),
   ),
-  metadata: z.record(z.string(), z.unknown()).optional()
+  metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
 export type CreateSubscriptionDto = z.infer<typeof CreateSubscriptionDtoSchema>;
 
 export const UpdateSubscriptionDtoSchema = z.object({
   // Only updateable fields - excluding immutable fields: key, customerKey, activationDate
-  billingCycleKey: z.string()
-    .min(1, 'Billing cycle key is required')
-    .regex(/^[a-z0-9-]+$/, 'Billing cycle key must be lowercase alphanumeric with hyphens')
+  billingCycleKey: z
+    .string()
+    .min(1, "Billing cycle key is required")
+    .regex(
+      /^[a-z0-9-]+$/,
+      "Billing cycle key must be lowercase alphanumeric with hyphens",
+    )
     .optional(),
   expirationDate: optionalDateField(),
   cancellationDate: optionalDateField(),
@@ -46,14 +58,15 @@ export const UpdateSubscriptionDtoSchema = z.object({
   currentPeriodStart: optionalDateField(),
   currentPeriodEnd: optionalDateField(),
   stripeSubscriptionId: z.preprocess(
-    (val) => (val === '' ? undefined : val),
-    z.string().optional()
+    (val) => (val === "" ? undefined : val),
+    z.string().optional(),
   ),
-  metadata: z.record(z.string(), z.unknown()).optional()
+  metadata: z.record(z.string(), z.unknown()).optional(),
 });
 export type UpdateSubscriptionDto = z.infer<typeof UpdateSubscriptionDtoSchema>;
 
 export interface SubscriptionDto {
+  addons: import("./AddonDto.js").SubscriptionAddonDto[];
   key: string;
   customerKey: string;
   productKey: string;
@@ -76,6 +89,8 @@ export interface SubscriptionDto {
 }
 
 export interface FeatureOverrideDto {
+  expiresAt?: string | null;
+  isActive?: boolean;
   featureKey: string;
   value: string;
   type: string;
@@ -86,11 +101,29 @@ export const SubscriptionFilterDtoSchema = z.object({
   customerKey: z.string().optional(),
   productKey: z.string().optional(),
   planKey: z.string().optional(),
-  status: z.enum(['pending', 'active', 'trial', 'cancelled', 'cancellation_pending', 'expired']).optional(),
+  status: z
+    .enum([
+      "pending",
+      "active",
+      "trial",
+      "cancelled",
+      "cancellation_pending",
+      "expired",
+    ])
+    .optional(),
   isArchived: z.boolean().optional(),
-  sortBy: z.enum(['activationDate', 'expirationDate', 'createdAt', 'updatedAt', 'currentPeriodStart', 'currentPeriodEnd']).optional(),
+  sortBy: z
+    .enum([
+      "activationDate",
+      "expirationDate",
+      "createdAt",
+      "updatedAt",
+      "currentPeriodStart",
+      "currentPeriodEnd",
+    ])
+    .optional(),
   sortOrder: sortOrderField,
-  ...paginationFields
+  ...paginationFields,
 });
 
 export type SubscriptionFilterDto = z.infer<typeof SubscriptionFilterDtoSchema>;
@@ -101,9 +134,18 @@ export const DetailedSubscriptionFilterDtoSchema = z.object({
   productKey: z.string().optional(),
   planKey: z.string().optional(),
   billingCycleKey: z.string().optional(),
-  status: z.enum(['pending', 'active', 'trial', 'cancelled', 'cancellation_pending', 'expired']).optional(),
+  status: z
+    .enum([
+      "pending",
+      "active",
+      "trial",
+      "cancelled",
+      "cancellation_pending",
+      "expired",
+    ])
+    .optional(),
   isArchived: z.boolean().optional(),
-  
+
   // Date range filters
   activationDateFrom: z.date().optional(),
   activationDateTo: z.date().optional(),
@@ -111,30 +153,40 @@ export const DetailedSubscriptionFilterDtoSchema = z.object({
   expirationDateTo: z.date().optional(),
   trialEndDateFrom: z.date().optional(),
   trialEndDateTo: z.date().optional(),
-  
+
   // Period filters
   currentPeriodStartFrom: z.date().optional(),
   currentPeriodStartTo: z.date().optional(),
   currentPeriodEndFrom: z.date().optional(),
   currentPeriodEndTo: z.date().optional(),
-  
+
   // Boolean filters
   hasStripeId: z.boolean().optional(),
   hasTrial: z.boolean().optional(),
-  
+
   // Feature override filters
   hasFeatureOverrides: z.boolean().optional(),
   featureKey: z.string().optional(),
-  
+
   // Metadata filters
   metadataKey: z.string().optional(),
   metadataValue: z.unknown().optional(),
-  
+
   // Sorting and pagination
-  sortBy: z.enum(['activationDate', 'expirationDate', 'createdAt', 'updatedAt', 'currentPeriodStart', 'currentPeriodEnd']).optional(),
+  sortBy: z
+    .enum([
+      "activationDate",
+      "expirationDate",
+      "createdAt",
+      "updatedAt",
+      "currentPeriodStart",
+      "currentPeriodEnd",
+    ])
+    .optional(),
   sortOrder: sortOrderField,
-  ...paginationFields
+  ...paginationFields,
 });
 
-export type DetailedSubscriptionFilterDto = z.infer<typeof DetailedSubscriptionFilterDtoSchema>;
-
+export type DetailedSubscriptionFilterDto = z.infer<
+  typeof DetailedSubscriptionFilterDtoSchema
+>;

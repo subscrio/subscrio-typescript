@@ -1,9 +1,14 @@
-import { DrizzleDb } from './drizzle.js';
-import { system_config } from './schema.js';
-import { sql } from 'drizzle-orm';
-import { now } from '../utils/date.js';
-import bcrypt from 'bcryptjs';
-import { ValidationError } from '../../application/errors/index.js';
+import { DrizzleDb } from "./drizzle.js";
+import { system_config } from "./schema.js";
+import { sql } from "drizzle-orm";
+import { now } from "../utils/date.js";
+import bcrypt from "bcryptjs";
+import {
+  ENTITLEMENT_MIGRATIONS,
+  ENTITLEMENT_TABLES,
+  entitlementMigrationSql,
+} from "./entitlementMigrations.js";
+import { ValidationError } from "../../application/errors/index.js";
 import {
   type DatabaseDialect,
   createSchemaSql,
@@ -14,29 +19,42 @@ import {
   INSTALL_TABLES_SQLSERVER,
   isTransientDbError,
   isSchemaMissingError,
-} from './dialect.js';
+} from "./dialect.js";
 
 export class SchemaInstaller {
-  readonly CURRENT_SCHEMA_VERSION = '1.1.0';
+  readonly CURRENT_SCHEMA_VERSION = "1.4.0";
 
   constructor(
     private readonly db: DrizzleDb,
-    private readonly dialect: DatabaseDialect = 'postgres'
+    private readonly dialect: DatabaseDialect = "postgres",
   ) {}
 
   async install(adminPassphrase?: string): Promise<void> {
     let lastError: unknown;
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
+        const installedVersion = await this.verify();
+        if (
+          installedVersion &&
+          this.compareVersions(installedVersion, this.CURRENT_SCHEMA_VERSION) >
+            0
+        ) {
+          throw new ValidationError(
+            "Database schema is newer than this library",
+          );
+        }
         await this.createTables();
         await this.setupInitialConfig(adminPassphrase);
+        await this.migrate();
         return;
       } catch (error) {
         lastError = error;
         if (attempt === 2 || !isTransientDbError(error)) {
           throw error;
         }
-        await new Promise((resolve) => setTimeout(resolve, 300 * (attempt + 1)));
+        await new Promise((resolve) =>
+          setTimeout(resolve, 300 * (attempt + 1)),
+        );
       }
     }
     throw lastError;
@@ -45,12 +63,15 @@ export class SchemaInstaller {
   private async createTables(): Promise<void> {
     await this.db.execute(sql.raw(createSchemaSql(this.dialect)));
 
-    const tables = this.dialect === 'sqlserver' ? INSTALL_TABLES_SQLSERVER : INSTALL_TABLES_POSTGRES;
+    const tables =
+      this.dialect === "sqlserver"
+        ? INSTALL_TABLES_SQLSERVER
+        : INSTALL_TABLES_POSTGRES;
     for (const statement of tables) {
       await this.db.execute(sql.raw(statement));
     }
 
-    if (this.dialect === 'postgres') {
+    if (this.dialect === "postgres") {
       await this.ensurePostgresColumns();
     }
 
@@ -142,11 +163,11 @@ export class SchemaInstaller {
     if (existing.length === 0 && adminPassphrase) {
       const hash = await bcrypt.hash(adminPassphrase, 10);
       await this.db.insert(system_config).values({
-        config_key: 'admin_passphrase_hash',
+        config_key: "admin_passphrase_hash",
         config_value: hash,
         encrypted: false,
         created_at: now(),
-        updated_at: now()
+        updated_at: now(),
       });
     }
 
@@ -158,11 +179,11 @@ export class SchemaInstaller {
 
     if (versionCheck.length === 0) {
       await this.db.insert(system_config).values({
-        config_key: 'schema_version',
-        config_value: this.CURRENT_SCHEMA_VERSION,
+        config_key: "schema_version",
+        config_value: "1.1.0",
         encrypted: false,
         created_at: now(),
-        updated_at: now()
+        updated_at: now(),
       });
     }
   }
@@ -196,41 +217,81 @@ export class SchemaInstaller {
         .update(system_config)
         .set({
           config_value: version,
-          updated_at: now()
+          updated_at: now(),
         })
         .where(sql`${system_config.config_key} = 'schema_version'`);
     } else {
       await this.db.insert(system_config).values({
-        config_key: 'schema_version',
+        config_key: "schema_version",
         config_value: version,
         encrypted: false,
         created_at: now(),
-        updated_at: now()
+        updated_at: now(),
       });
     }
   }
 
   async migrate(): Promise<number> {
+    return this.db.transaction(async (tx) => {
+      if (this.dialect === "postgres")
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(1937072755)`);
+      else
+        await tx.execute(
+          sql.raw(
+            "EXEC sp_getapplock @Resource='subscrio-schema', @LockMode='Exclusive', @LockOwner='Transaction'",
+          ),
+        );
+      const installer = new SchemaInstaller(
+        tx as unknown as DrizzleDb,
+        this.dialect,
+      );
+      return installer.migrateLocked();
+    });
+  }
+
+  private async migrateLocked(): Promise<number> {
     const previousVersion = await this.verify();
+    if (
+      previousVersion &&
+      this.compareVersions(previousVersion, this.CURRENT_SCHEMA_VERSION) > 0
+    )
+      throw new ValidationError("Database schema is newer than this library");
     let migrationsApplied = 0;
 
-    if (!previousVersion || this.compareVersions(previousVersion, '1.1.0') < 0) {
+    if (
+      !previousVersion ||
+      this.compareVersions(previousVersion, "1.1.0") < 0
+    ) {
       await this.migrateTo_1_1_0();
-      await this.updateSchemaVersion('1.1.0');
+      await this.updateSchemaVersion("1.1.0");
       migrationsApplied++;
     }
 
+    for (const version of Object.keys(ENTITLEMENT_MIGRATIONS)) {
+      if (
+        !previousVersion ||
+        this.compareVersions(previousVersion, version) < 0
+      ) {
+        for (const statement of entitlementMigrationSql(version, this.dialect))
+          await this.db.execute(sql.raw(statement));
+        await this.updateSchemaVersion(version);
+        migrationsApplied++;
+      }
+    }
     await this.refreshSubscriptionStatusView();
     await this.updateSchemaVersion(this.CURRENT_SCHEMA_VERSION);
 
-    if (migrationsApplied === 0 && previousVersion !== this.CURRENT_SCHEMA_VERSION) {
+    if (
+      migrationsApplied === 0 &&
+      previousVersion !== this.CURRENT_SCHEMA_VERSION
+    ) {
       return 1;
     }
     return migrationsApplied;
   }
 
   private async migrateTo_1_1_0(): Promise<void> {
-    if (this.dialect === 'postgres') {
+    if (this.dialect === "postgres") {
       await this.db.execute(sql`
         DO $$
         BEGIN
@@ -246,16 +307,18 @@ export class SchemaInstaller {
         CREATE UNIQUE INDEX IF NOT EXISTS plans_key_global_unique ON subscrio.plans (key);
       `);
     } else {
-      await this.db.execute(sql.raw(`
+      await this.db.execute(
+        sql.raw(`
         IF COL_LENGTH('subscrio.subscriptions', 'transitioned_at') IS NULL
           ALTER TABLE subscrio.subscriptions ADD transitioned_at DATETIMEOFFSET NULL;
-      `));
+      `),
+      );
     }
   }
 
   private compareVersions(v1: string, v2: string): number {
-    const parts1 = v1.split('.').map(Number);
-    const parts2 = v2.split('.').map(Number);
+    const parts1 = v1.split(".").map(Number);
+    const parts2 = v2.split(".").map(Number);
 
     for (let i = 0; i < Math.max(parts1.length, parts2.length); i++) {
       const part1 = parts1[i] || 0;
@@ -272,16 +335,17 @@ export class SchemaInstaller {
     await this.db.execute(sql.raw(dropViewSql(this.dialect)));
 
     const tablesToDrop = [
-      'subscription_feature_overrides',
-      'subscriptions',
-      'plan_features',
-      'product_features',
-      'billing_cycles',
-      'plans',
-      'features',
-      'products',
-      'customers',
-      'system_config'
+      ...ENTITLEMENT_TABLES,
+      "subscription_feature_overrides",
+      "subscriptions",
+      "plan_features",
+      "product_features",
+      "billing_cycles",
+      "plans",
+      "features",
+      "products",
+      "customers",
+      "system_config",
     ];
 
     for (const table of tablesToDrop) {
@@ -309,9 +373,12 @@ export class SchemaInstaller {
       return;
     }
 
-    if (!adminPassphrase || !(await bcrypt.compare(adminPassphrase, existingHash.config_value))) {
+    if (
+      !adminPassphrase ||
+      !(await bcrypt.compare(adminPassphrase, existingHash.config_value))
+    ) {
       throw new ValidationError(
-        'Admin passphrase is required and must match the configured passphrase to drop the schema.'
+        "Admin passphrase is required and must match the configured passphrase to drop the schema.",
       );
     }
   }

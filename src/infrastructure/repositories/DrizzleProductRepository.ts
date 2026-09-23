@@ -1,26 +1,32 @@
-import { eq, and, ilike, or, desc } from 'drizzle-orm';
-import { DrizzleDb } from '../database/drizzle.js';
-import { products, product_features, plans } from '../database/schema.js';
-import { IProductRepository } from '../../application/repositories/IProductRepository.js';
-import { Product } from '../../domain/entities/Product.js';
-import { ProductMapper } from '../../application/mappers/ProductMapper.js';
-import { ProductFilterDto } from '../../application/dtos/ProductDto.js';
-import { now } from '../utils/date.js';
-import { applyPaging } from './applyPaging.js';
+import { accountingDelete } from "../database/accountingDelete.js";
+import { eq, and, ilike, or, desc } from "drizzle-orm";
+import { DrizzleDb } from "../database/drizzle.js";
+import {
+  products,
+  product_features,
+  plans,
+  features,
+} from "../database/schema.js";
+import { IProductRepository } from "../../application/repositories/IProductRepository.js";
+import { Product } from "../../domain/entities/Product.js";
+import { ProductMapper } from "../../application/mappers/ProductMapper.js";
+import { ProductFilterDto } from "../../application/dtos/ProductDto.js";
+import { now } from "../utils/date.js";
+import { applyPaging } from "./applyPaging.js";
 
 export class DrizzleProductRepository implements IProductRepository {
   constructor(private readonly db: DrizzleDb) {}
 
   async save(product: Product): Promise<Product> {
     const record = ProductMapper.toPersistence(product);
-    
+
     if (product.id === undefined) {
       // Insert new entity
       const [inserted] = await this.db
         .insert(products)
         .values(record)
         .returning({ id: products.id });
-      
+
       // Update entity with generated ID
       return new Product(product.props, inserted.id);
     } else {
@@ -33,10 +39,10 @@ export class DrizzleProductRepository implements IProductRepository {
           description: record.description,
           status: record.status,
           metadata: record.metadata,
-          updated_at: record.updated_at
+          updated_at: record.updated_at,
         })
         .where(eq(products.id, product.id));
-      
+
       return product;
     }
   }
@@ -73,8 +79,8 @@ export class DrizzleProductRepository implements IProductRepository {
       query = query.where(
         or(
           ilike(products.display_name, `%${filters.search}%`),
-          ilike(products.key, `%${filters.search}%`)
-        )
+          ilike(products.key, `%${filters.search}%`),
+        ),
       ) as any;
     }
 
@@ -86,16 +92,31 @@ export class DrizzleProductRepository implements IProductRepository {
   }
 
   async delete(id: number): Promise<void> {
-    await this.db.delete(products).where(eq(products.id, id));
+    await accountingDelete(async () => {
+      await this.db.delete(products).where(eq(products.id, id));
+    });
   }
 
   async associateFeature(productId: number, featureId: number): Promise<void> {
+    const [feature] = await this.db
+      .select()
+      .from(features)
+      .where(eq(features.id, featureId));
+    const numeric =
+      feature?.value_type === "numeric" || feature?.value_type === "metered";
     await this.db
       .insert(product_features)
       .values({
         product_id: productId,
         feature_id: featureId,
-        created_at: now()
+        composition_rule: numeric
+          ? "additive"
+          : feature?.value_type === "toggle"
+            ? "most_generous"
+            : "override_wins",
+        cross_subscription_rule:
+          feature?.value_type === "text" ? "override_wins" : "most_generous",
+        created_at: now(),
       })
       .onConflictDoNothing();
   }
@@ -106,8 +127,8 @@ export class DrizzleProductRepository implements IProductRepository {
       .where(
         and(
           eq(product_features.product_id, productId),
-          eq(product_features.feature_id, featureId)
-        )
+          eq(product_features.feature_id, featureId),
+        ),
       );
   }
 
@@ -117,7 +138,7 @@ export class DrizzleProductRepository implements IProductRepository {
       .from(product_features)
       .where(eq(product_features.product_id, productId));
 
-    return records.map(r => r.feature_id);
+    return records.map((r) => r.feature_id);
   }
 
   async hasPlans(productKey: string): Promise<boolean> {
@@ -127,7 +148,7 @@ export class DrizzleProductRepository implements IProductRepository {
       .from(products)
       .where(eq(products.key, productKey))
       .limit(1);
-    
+
     if (!product) return false;
 
     const [record] = await this.db
@@ -139,4 +160,3 @@ export class DrizzleProductRepository implements IProductRepository {
     return !!record;
   }
 }
-

@@ -1,26 +1,27 @@
-import { IBillingCycleRepository } from '../../application/repositories/IBillingCycleRepository.js';
-import { BillingCycle } from '../../domain/entities/BillingCycle.js';
-import { BillingCycleMapper } from '../../application/mappers/BillingCycleMapper.js';
-import { DrizzleDb } from '../database/drizzle.js';
-import { billing_cycles } from '../database/schema.js';
-import { eq, and, like, or, desc, asc } from 'drizzle-orm';
-import { BillingCycleFilterDto } from '../../application/dtos/BillingCycleDto.js';
-import { DurationUnit } from '../../domain/value-objects/DurationUnit.js';
-import { applyPaging } from './applyPaging.js';
+import { accountingDelete } from "../database/accountingDelete.js";
+import { IBillingCycleRepository } from "../../application/repositories/IBillingCycleRepository.js";
+import { BillingCycle } from "../../domain/entities/BillingCycle.js";
+import { BillingCycleMapper } from "../../application/mappers/BillingCycleMapper.js";
+import { DrizzleDb } from "../database/drizzle.js";
+import { billing_cycles } from "../database/schema.js";
+import { eq, and, like, or, desc, asc } from "drizzle-orm";
+import { BillingCycleFilterDto } from "../../application/dtos/BillingCycleDto.js";
+import { DurationUnit } from "../../domain/value-objects/DurationUnit.js";
+import { applyPaging } from "./applyPaging.js";
 
 export class DrizzleBillingCycleRepository implements IBillingCycleRepository {
   constructor(private readonly db: DrizzleDb) {}
 
   async save(billingCycle: BillingCycle): Promise<BillingCycle> {
     const record = BillingCycleMapper.toPersistence(billingCycle);
-    
+
     if (billingCycle.id === undefined) {
       // Insert new entity
       const [inserted] = await this.db
         .insert(billing_cycles)
         .values(record)
         .returning({ id: billing_cycles.id });
-      
+
       // Update entity with generated ID
       return new BillingCycle(billingCycle.props, inserted.id as number);
     } else {
@@ -36,10 +37,10 @@ export class DrizzleBillingCycleRepository implements IBillingCycleRepository {
           duration_value: record.duration_value,
           duration_unit: record.duration_unit,
           external_product_id: record.external_product_id,
-          updated_at: record.updated_at
+          updated_at: record.updated_at,
         })
         .where(eq(billing_cycles.id, billingCycle.id));
-      
+
       return billingCycle;
     }
   }
@@ -50,7 +51,7 @@ export class DrizzleBillingCycleRepository implements IBillingCycleRepository {
       .from(billing_cycles)
       .where(eq(billing_cycles.id, id))
       .limit(1);
-    
+
     return record ? BillingCycleMapper.toDomain(record) : null;
   }
 
@@ -60,7 +61,7 @@ export class DrizzleBillingCycleRepository implements IBillingCycleRepository {
       .from(billing_cycles)
       .where(eq(billing_cycles.key, key))
       .limit(1);
-    
+
     return record ? BillingCycleMapper.toDomain(record) : null;
   }
 
@@ -70,7 +71,7 @@ export class DrizzleBillingCycleRepository implements IBillingCycleRepository {
       .from(billing_cycles)
       .where(eq(billing_cycles.plan_id, planId))
       .orderBy(asc(billing_cycles.created_at));
-    
+
     return records.map(BillingCycleMapper.toDomain);
   }
 
@@ -98,8 +99,8 @@ export class DrizzleBillingCycleRepository implements IBillingCycleRepository {
         conditions.push(
           or(
             like(billing_cycles.display_name, `%${filters.search}%`),
-            like(billing_cycles.description, `%${filters.search}%`)
-          )
+            like(billing_cycles.description, `%${filters.search}%`),
+          ),
         );
       }
 
@@ -108,13 +109,21 @@ export class DrizzleBillingCycleRepository implements IBillingCycleRepository {
       }
 
       // Apply sorting
-      const sortBy = filters.sortBy || 'displayOrder';
-      const sortOrder = filters.sortOrder || 'asc';
-      
-      if (sortBy === 'displayName') {
-        query = query.orderBy(sortOrder === 'desc' ? desc(billing_cycles.display_name) : asc(billing_cycles.display_name)) as typeof query;
+      const sortBy = filters.sortBy || "displayOrder";
+      const sortOrder = filters.sortOrder || "asc";
+
+      if (sortBy === "displayName") {
+        query = query.orderBy(
+          sortOrder === "desc"
+            ? desc(billing_cycles.display_name)
+            : asc(billing_cycles.display_name),
+        ) as typeof query;
       } else {
-        query = query.orderBy(sortOrder === 'desc' ? desc(billing_cycles.created_at) : asc(billing_cycles.created_at)) as typeof query;
+        query = query.orderBy(
+          sortOrder === "desc"
+            ? desc(billing_cycles.created_at)
+            : asc(billing_cycles.created_at),
+        ) as typeof query;
       }
 
       query = applyPaging(query, filters.offset, filters.limit) as typeof query;
@@ -126,7 +135,9 @@ export class DrizzleBillingCycleRepository implements IBillingCycleRepository {
     return records.map(BillingCycleMapper.toDomain);
   }
 
-  async findByDurationUnit(durationUnit: DurationUnit): Promise<BillingCycle[]> {
+  async findByDurationUnit(
+    durationUnit: DurationUnit,
+  ): Promise<BillingCycle[]> {
     const records = await this.db
       .select()
       .from(billing_cycles)
@@ -137,7 +148,8 @@ export class DrizzleBillingCycleRepository implements IBillingCycleRepository {
   }
 
   async delete(id: number): Promise<void> {
-    await this.db.delete(billing_cycles).where(eq(billing_cycles.id, id));
+    await accountingDelete(async () => {
+      await this.db.delete(billing_cycles).where(eq(billing_cycles.id, id));
+    });
   }
 }
-

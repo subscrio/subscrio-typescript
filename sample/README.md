@@ -25,7 +25,7 @@ This demo walks through a complete customer lifecycle:
 
 ## Prerequisites
 
-- Node.js 18+ or compatible runtime
+- Node.js 20.19+ or compatible runtime
 - PostgreSQL database (local or remote)
 - npm package manager
 
@@ -155,31 +155,17 @@ The demo produces structured, educational output:
 
 ## Key Concepts Demonstrated
 
-### Optimized Subscription API
+### Creating a subscription
 
-This demo showcases the **optimized subscription creation API** that simplifies the process:
+Supply a subscription key, customer key, and billing-cycle key. The billing cycle determines the plan and product.
 
 ```typescript
-// ✅ NEW: Optimized API (only 2 required parameters)
 await subscrio.subscriptions.createSubscription({
+  key: 'acme-starter',
   customerKey: 'acme-corp',
-  billingCycleKey: 'monthly'  // Plan and product derived automatically
-});
-
-// ❌ OLD: Verbose API (4 required parameters)
-await subscrio.subscriptions.createSubscription({
-  customerKey: 'acme-corp',
-  productKey: 'projecthub',    // Redundant - derived from billing cycle
-  planKey: 'starter',          // Redundant - derived from billing cycle  
-  billingCycleKey: 'monthly'
+  billingCycleKey: 'starter-monthly'
 });
 ```
-
-**Benefits:**
-- **50% fewer parameters** required
-- **Automatic derivation** of plan and product from billing cycle
-- **Reduced errors** from mismatched product/plan combinations
-- **Better performance** with fewer database lookups
 
 ### Feature Resolution Hierarchy
 
@@ -207,7 +193,7 @@ Customers can have multiple active subscriptions. The demo shows:
 - `plans.createPlan()`
 - `plans.setFeatureValue()`
 - `customers.createCustomer()`
-- `subscriptions.createSubscription()` (optimized API - only requires customerKey and billingCycleKey)
+- `subscriptions.createSubscription()` (requires key, customerKey and billingCycleKey)
 - `subscriptions.addFeatureOverride()`
 - `featureChecker.getValueForCustomer()`
 - `featureChecker.getAllFeaturesForCustomer()`
@@ -237,8 +223,8 @@ ERROR: DATABASE_URL environment variable is required
 The demo checks if the schema exists and won't reinstall it. To start fresh:
 
 ```sql
-DROP SCHEMA public CASCADE;
-CREATE SCHEMA public;
+-- Only in a disposable database: use the sample --recreate option.
+-- Subscrio uses the subscrio schema.
 ```
 
 ### Full Schema Reset While Running the Sample
@@ -274,3 +260,7 @@ For questions or issues:
 - Review the [Subscrio docs](https://github.com/subscrio/docs)
 - Examine the [test examples](../tests/e2e/)
 
+
+## Asserted catalog and accounting walkthrough
+
+After the original lifecycle scenario, the console demonstrates add-on quantities and composition, timed override expiry, hard and soft metered quotas, idempotent retries, shared credit spending, recurring grants, cancellation and ledger reconciliation. Each displayed result is asserted; success ends with `CAPABILITIES DEMO VERIFIED`. It uses a fixed adjustable clock and unique catalog keys. Run against a disposable database; retained accounting history intentionally prevents destructive cleanup of reused customers.

@@ -1,5 +1,5 @@
 export enum OverrideType {
-  Permanent = 'permanent',
-  Temporary = 'temporary'
+  Permanent = "permanent",
+  Temporary = "temporary",
+  Timed = "timed",
 }
-
