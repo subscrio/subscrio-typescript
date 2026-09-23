@@ -1,10 +1,11 @@
-import { Entity } from '../base/Entity.js';
-import { FeatureStatus } from '../value-objects/FeatureStatus.js';
-import { FeatureValueType } from '../value-objects/FeatureValueType.js';
-import { DomainError } from '../errors/DomainError.js';
-import { now } from '../clock.js';
+import { Entity } from "../base/Entity.js";
+import { FeatureStatus } from "../value-objects/FeatureStatus.js";
+import { FeatureValueType } from "../value-objects/FeatureValueType.js";
+import { DomainError } from "../errors/DomainError.js";
+import { now } from "../clock.js";
 
 export interface FeatureProps {
+  meteredConfig?: import("../../application/dtos/MeteringDto.js").MeteredFeatureConfigDto;
   key: string;
   displayName: string;
   description?: string;
@@ -55,7 +56,7 @@ export class Feature extends Entity<FeatureProps> {
 
   updateDisplayName(name: string): void {
     if (!name || name.length === 0) {
-      throw new DomainError('Display name cannot be empty');
+      throw new DomainError("Display name cannot be empty");
     }
     this.props.displayName = name;
     this.props.updatedAt = now();
@@ -65,6 +66,4 @@ export class Feature extends Entity<FeatureProps> {
     this.props.valueType = valueType;
     this.props.updatedAt = now();
   }
-
 }
-

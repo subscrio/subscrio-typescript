@@ -1,11 +1,13 @@
-import { Feature } from '../../domain/entities/Feature.js';
-import { FeatureDto } from '../dtos/FeatureDto.js';
-import { FeatureStatus } from '../../domain/value-objects/FeatureStatus.js';
-import { FeatureValueType } from '../../domain/value-objects/FeatureValueType.js';
+import { Feature } from "../../domain/entities/Feature.js";
+import { FeatureDto } from "../dtos/FeatureDto.js";
+import { FeatureStatus } from "../../domain/value-objects/FeatureStatus.js";
+import { FeatureValueType } from "../../domain/value-objects/FeatureValueType.js";
 
 export class FeatureMapper {
   static toDto(feature: Feature): FeatureDto {
     return {
+      addons: [],
+      meteredConfig: feature.props.meteredConfig ?? null,
       key: feature.key,
       displayName: feature.displayName,
       description: feature.props.description ?? null,
@@ -16,7 +18,7 @@ export class FeatureMapper {
       validator: feature.props.validator ?? null,
       metadata: feature.props.metadata ?? null,
       createdAt: feature.props.createdAt.toISOString(),
-      updatedAt: feature.props.updatedAt.toISOString()
+      updatedAt: feature.props.updatedAt.toISOString(),
     };
   }
 
@@ -33,9 +35,9 @@ export class FeatureMapper {
         validator: raw.validator,
         metadata: raw.metadata,
         createdAt: new Date(raw.created_at),
-        updatedAt: new Date(raw.updated_at)
+        updatedAt: new Date(raw.updated_at),
       },
-      raw.id as number | undefined
+      raw.id as number | undefined,
     );
   }
 
@@ -51,15 +53,14 @@ export class FeatureMapper {
       validator: feature.props.validator,
       metadata: feature.props.metadata,
       created_at: feature.props.createdAt,
-      updated_at: feature.props.updatedAt
+      updated_at: feature.props.updatedAt,
     };
-    
+
     // Only include id for updates (not inserts)
     if (feature.id !== undefined) {
       record.id = feature.id;
     }
-    
+
     return record;
   }
 }
-

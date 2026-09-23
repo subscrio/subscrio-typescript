@@ -1,38 +1,46 @@
-import { z } from 'zod';
-import { paginationFields, sortOrderField } from './filterFields.js';
+import { z } from "zod";
+import { paginationFields, sortOrderField } from "./filterFields.js";
 
 export const CreatePlanDtoSchema = z.object({
-  productKey: z.string()
-    .min(1, 'Product key is required')
-    .regex(/^[a-z0-9-]+$/, 'Product key must be lowercase alphanumeric with hyphens'),
-  key: z.string()
-    .min(1, 'Key is required')
-    .max(255, 'Key too long')
-    .regex(/^[a-z0-9-]+$/, 'Key must be globally unique across all plans'),
-  displayName: z.string()
-    .min(1, 'Display name is required')
-    .max(255, 'Display name too long'),
+  productKey: z
+    .string()
+    .min(1, "Product key is required")
+    .regex(
+      /^[a-z0-9-]+$/,
+      "Product key must be lowercase alphanumeric with hyphens",
+    ),
+  key: z
+    .string()
+    .min(1, "Key is required")
+    .max(255, "Key too long")
+    .regex(/^[a-z0-9-]+$/, "Key must be globally unique across all plans"),
+  displayName: z
+    .string()
+    .min(1, "Display name is required")
+    .max(255, "Display name too long"),
   description: z.string().max(1000).optional(),
   onExpireTransitionToBillingCycleKey: z.string().optional(),
-  metadata: z.record(z.string(), z.unknown()).optional()
+  metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
 export type CreatePlanDto = z.infer<typeof CreatePlanDtoSchema>;
 
 export const UpdatePlanDtoSchema = z.object({
   // Only updateable fields - excluding immutable fields: key, productKey
-  displayName: z.string()
-    .min(1, 'Display name is required')
-    .max(255, 'Display name too long')
+  displayName: z
+    .string()
+    .min(1, "Display name is required")
+    .max(255, "Display name too long")
     .optional(),
   description: z.string().max(1000).optional(),
   onExpireTransitionToBillingCycleKey: z.string().optional(),
   clearOnExpireTransitionToBillingCycleKey: z.boolean().optional(),
-  metadata: z.record(z.string(), z.unknown()).optional()
+  metadata: z.record(z.string(), z.unknown()).optional(),
 });
 export type UpdatePlanDto = z.infer<typeof UpdatePlanDtoSchema>;
 
 export interface PlanDto {
+  addons: import("./AddonDto.js").AddonDto[];
   productKey: string;
   key: string;
   displayName: string;
@@ -46,12 +54,11 @@ export interface PlanDto {
 
 export const PlanFilterDtoSchema = z.object({
   productKey: z.string().optional(),
-  status: z.enum(['active', 'archived']).optional(),
+  status: z.enum(["active", "archived"]).optional(),
   search: z.string().optional(),
-  sortBy: z.enum(['displayName', 'createdAt']).optional(),
+  sortBy: z.enum(["displayName", "createdAt"]).optional(),
   sortOrder: sortOrderField,
-  ...paginationFields
+  ...paginationFields,
 });
 
 export type PlanFilterDto = z.infer<typeof PlanFilterDtoSchema>;
-

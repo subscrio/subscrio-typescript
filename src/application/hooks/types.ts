@@ -1,39 +1,57 @@
-import type { CustomerDto } from '../dtos/CustomerDto.js';
-import type { SubscriptionDto } from '../dtos/SubscriptionDto.js';
-import type Stripe from 'stripe';
+import type { CustomerDto } from "../dtos/CustomerDto.js";
+import type { SubscriptionDto } from "../dtos/SubscriptionDto.js";
+import type Stripe from "stripe";
 
-export type HookSource = 'api' | 'stripe' | 'system';
-export type HookPhase = 'before' | 'after';
+export type HookSource = "api" | "stripe" | "system";
+export type HookPhase = "before" | "after";
 
 export const HookEvents = {
-  CustomerCreatedBefore: 'customer.created.before',
-  CustomerCreatedAfter: 'customer.created.after',
-  CustomerUpdatedBefore: 'customer.updated.before',
-  CustomerUpdatedAfter: 'customer.updated.after',
-  CustomerArchivedBefore: 'customer.archived.before',
-  CustomerArchivedAfter: 'customer.archived.after',
-  CustomerUnarchivedBefore: 'customer.unarchived.before',
-  CustomerUnarchivedAfter: 'customer.unarchived.after',
-  CustomerDeletedBefore: 'customer.deleted.before',
-  CustomerDeletedAfter: 'customer.deleted.after',
-  SubscriptionCreatedBefore: 'subscription.created.before',
-  SubscriptionCreatedAfter: 'subscription.created.after',
-  SubscriptionUpdatedBefore: 'subscription.updated.before',
-  SubscriptionUpdatedAfter: 'subscription.updated.after',
-  SubscriptionArchivedBefore: 'subscription.archived.before',
-  SubscriptionArchivedAfter: 'subscription.archived.after',
-  SubscriptionUnarchivedBefore: 'subscription.unarchived.before',
-  SubscriptionUnarchivedAfter: 'subscription.unarchived.after',
-  SubscriptionDeletedBefore: 'subscription.deleted.before',
-  SubscriptionDeletedAfter: 'subscription.deleted.after',
-  SubscriptionFeatureOverrideAddedBefore: 'subscription.featureOverrideAdded.before',
-  SubscriptionFeatureOverrideAddedAfter: 'subscription.featureOverrideAdded.after',
-  SubscriptionFeatureOverrideRemovedBefore: 'subscription.featureOverrideRemoved.before',
-  SubscriptionFeatureOverrideRemovedAfter: 'subscription.featureOverrideRemoved.after',
-  SubscriptionTemporaryOverridesClearedBefore: 'subscription.temporaryOverridesCleared.before',
-  SubscriptionTemporaryOverridesClearedAfter: 'subscription.temporaryOverridesCleared.after',
-  StripeReceivedBefore: 'stripe.received.before',
-  StripeReceivedAfter: 'stripe.received.after',
+  SubscriptionAddonAttachedBefore: "subscription.addonAttached.before",
+  SubscriptionAddonAttachedAfter: "subscription.addonAttached.after",
+  SubscriptionAddonDetachedBefore: "subscription.addonDetached.before",
+  SubscriptionAddonDetachedAfter: "subscription.addonDetached.after",
+  UsageReportedBefore: "usage.reported.before",
+  UsageReportedAfter: "usage.reported.after",
+  CreditConsumedBefore: "credit.consumed.before",
+  CreditConsumedAfter: "credit.consumed.after",
+  CreditGrantedBefore: "credit.granted.before",
+  CreditGrantedAfter: "credit.granted.after",
+  CreditAdjustedBefore: "credit.adjusted.before",
+  CreditAdjustedAfter: "credit.adjusted.after",
+  CustomerCreatedBefore: "customer.created.before",
+  CustomerCreatedAfter: "customer.created.after",
+  CustomerUpdatedBefore: "customer.updated.before",
+  CustomerUpdatedAfter: "customer.updated.after",
+  CustomerArchivedBefore: "customer.archived.before",
+  CustomerArchivedAfter: "customer.archived.after",
+  CustomerUnarchivedBefore: "customer.unarchived.before",
+  CustomerUnarchivedAfter: "customer.unarchived.after",
+  CustomerDeletedBefore: "customer.deleted.before",
+  CustomerDeletedAfter: "customer.deleted.after",
+  SubscriptionCreatedBefore: "subscription.created.before",
+  SubscriptionCreatedAfter: "subscription.created.after",
+  SubscriptionUpdatedBefore: "subscription.updated.before",
+  SubscriptionUpdatedAfter: "subscription.updated.after",
+  SubscriptionArchivedBefore: "subscription.archived.before",
+  SubscriptionArchivedAfter: "subscription.archived.after",
+  SubscriptionUnarchivedBefore: "subscription.unarchived.before",
+  SubscriptionUnarchivedAfter: "subscription.unarchived.after",
+  SubscriptionDeletedBefore: "subscription.deleted.before",
+  SubscriptionDeletedAfter: "subscription.deleted.after",
+  SubscriptionFeatureOverrideAddedBefore:
+    "subscription.featureOverrideAdded.before",
+  SubscriptionFeatureOverrideAddedAfter:
+    "subscription.featureOverrideAdded.after",
+  SubscriptionFeatureOverrideRemovedBefore:
+    "subscription.featureOverrideRemoved.before",
+  SubscriptionFeatureOverrideRemovedAfter:
+    "subscription.featureOverrideRemoved.after",
+  SubscriptionTemporaryOverridesClearedBefore:
+    "subscription.temporaryOverridesCleared.before",
+  SubscriptionTemporaryOverridesClearedAfter:
+    "subscription.temporaryOverridesCleared.after",
+  StripeReceivedBefore: "stripe.received.before",
+  StripeReceivedAfter: "stripe.received.after",
 } as const;
 
 export type HookEventName = (typeof HookEvents)[keyof typeof HookEvents];
@@ -58,10 +76,13 @@ export interface SubscriptionMutationHookEvent extends EntityMutationHookEvent<S
   featureKey?: string;
   value?: string;
   overrideType?: string;
+  expiresAt?: string | null;
 }
 
 export interface StripeReceivedHookEvent {
-  type: typeof HookEvents.StripeReceivedBefore | typeof HookEvents.StripeReceivedAfter;
+  type:
+    | typeof HookEvents.StripeReceivedBefore
+    | typeof HookEvents.StripeReceivedAfter;
   phase: HookPhase;
   occurredAt: string;
   data: Stripe.Event;
@@ -69,7 +90,28 @@ export interface StripeReceivedHookEvent {
   stripeSubscriptionId?: string;
 }
 
+export interface AccountingMutationHookEvent {
+  type: HookEventName;
+  phase: HookPhase;
+  source: HookSource;
+  occurredAt: string;
+  input: Record<string, unknown>;
+  result?: unknown;
+}
+
 export type HookEventMap = {
+  [HookEvents.SubscriptionAddonAttachedBefore]: AccountingMutationHookEvent;
+  [HookEvents.SubscriptionAddonAttachedAfter]: AccountingMutationHookEvent;
+  [HookEvents.SubscriptionAddonDetachedBefore]: AccountingMutationHookEvent;
+  [HookEvents.SubscriptionAddonDetachedAfter]: AccountingMutationHookEvent;
+  [HookEvents.UsageReportedBefore]: AccountingMutationHookEvent;
+  [HookEvents.UsageReportedAfter]: AccountingMutationHookEvent;
+  [HookEvents.CreditConsumedBefore]: AccountingMutationHookEvent;
+  [HookEvents.CreditConsumedAfter]: AccountingMutationHookEvent;
+  [HookEvents.CreditGrantedBefore]: AccountingMutationHookEvent;
+  [HookEvents.CreditGrantedAfter]: AccountingMutationHookEvent;
+  [HookEvents.CreditAdjustedBefore]: AccountingMutationHookEvent;
+  [HookEvents.CreditAdjustedAfter]: AccountingMutationHookEvent;
   [HookEvents.CustomerCreatedBefore]: CustomerMutationHookEvent;
   [HookEvents.CustomerCreatedAfter]: CustomerMutationHookEvent;
   [HookEvents.CustomerUpdatedBefore]: CustomerMutationHookEvent;
@@ -101,7 +143,7 @@ export type HookEventMap = {
 };
 
 export type HookHandler<E extends HookEventName> = (
-  event: HookEventMap[E]
+  event: HookEventMap[E],
 ) => void | Promise<void>;
 
 export type HooksConfig = {

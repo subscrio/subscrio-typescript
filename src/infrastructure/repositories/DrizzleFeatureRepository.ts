@@ -1,25 +1,90 @@
-import { IFeatureRepository } from '../../application/repositories/IFeatureRepository.js';
-import { Feature } from '../../domain/entities/Feature.js';
-import { FeatureMapper } from '../../application/mappers/FeatureMapper.js';
-import { DrizzleDb } from '../database/drizzle.js';
-import { features, product_features, plan_features, subscription_feature_overrides } from '../database/schema.js';
-import { eq, and, like, or, desc, asc, inArray } from 'drizzle-orm';
-import { FeatureFilterDto } from '../../application/dtos/FeatureDto.js';
-import { applyPaging } from './applyPaging.js';
+import { accountingDelete } from "../database/accountingDelete.js";
+import { DatabaseSession } from "../database/DatabaseSession.js";
+import { MeteredConfigRepository } from "./MeteredConfigRepository.js";
+import { ValidationError } from "../../application/errors/index.js";
+import { sql } from "drizzle-orm";
+import { IFeatureRepository } from "../../application/repositories/IFeatureRepository.js";
+import { Feature } from "../../domain/entities/Feature.js";
+import { FeatureMapper } from "../../application/mappers/FeatureMapper.js";
+import { DrizzleDb } from "../database/drizzle.js";
+import {
+  features,
+  product_features,
+  plan_features,
+  subscription_feature_overrides,
+} from "../database/schema.js";
+import { eq, and, like, or, desc, asc, inArray } from "drizzle-orm";
+import { FeatureFilterDto } from "../../application/dtos/FeatureDto.js";
+import { applyPaging } from "./applyPaging.js";
 
 export class DrizzleFeatureRepository implements IFeatureRepository {
   constructor(private readonly db: DrizzleDb) {}
 
   async save(feature: Feature): Promise<Feature> {
+    if (feature.valueType === "metered" && !feature.props.meteredConfig)
+      throw new ValidationError("Metered features require meteredConfig");
+    if (feature.valueType !== "metered" && feature.props.meteredConfig)
+      throw new ValidationError("Only metered features accept meteredConfig");
+    return this.db.transaction(async (tx) => {
+      const repository = new DrizzleFeatureRepository(
+        tx as unknown as DrizzleDb,
+      );
+      if (feature.id !== undefined) {
+        const [old] = await tx
+          .select()
+          .from(features)
+          .where(eq(features.id, feature.id))
+          .for("update");
+        if (old?.value_type !== feature.valueType) {
+          const used = await tx.execute(
+            sql`SELECT id FROM subscrio.usage_events WHERE feature_id=${feature.id} LIMIT 1`,
+          );
+          if (used.rows.length)
+            throw new ValidationError(
+              "Cannot change feature type after usage is recorded",
+            );
+        }
+      }
+      if (feature.id !== undefined && feature.valueType === "metered") {
+        const rules = await tx.execute(
+          sql`SELECT id FROM subscrio.credit_consumption_rules WHERE feature_id=${feature.id} LIMIT 1`,
+        );
+        if (rules.rows.length)
+          throw new ValidationError(
+            "Remove credit consumption rules before changing to metered",
+          );
+      }
+      if (feature.id !== undefined && feature.valueType === "text")
+        await tx.execute(
+          sql`UPDATE subscrio.product_features SET composition_rule='override_wins',cross_subscription_rule=CASE WHEN cross_subscription_rule='legacy' THEN 'legacy' ELSE 'override_wins' END WHERE feature_id=${feature.id}`,
+        );
+      const saved = await repository.saveRecord(feature);
+      if (saved.props.meteredConfig)
+        await new MeteredConfigRepository(
+          new DatabaseSession(tx as unknown as DrizzleDb),
+        ).setMeteredConfig(saved.key, saved.props.meteredConfig);
+      return saved;
+    });
+  }
+  private async hydrate(record: any): Promise<Feature> {
+    const feature = FeatureMapper.toDomain(record);
+    if (feature.valueType === "metered")
+      feature.props.meteredConfig =
+        (await new MeteredConfigRepository(
+          new DatabaseSession(this.db),
+        ).getMeteredConfig(feature.key)) ?? undefined;
+    return feature;
+  }
+  private async saveRecord(feature: Feature): Promise<Feature> {
     const record = FeatureMapper.toPersistence(feature);
-    
+
     if (feature.id === undefined) {
       // Insert new entity
       const [inserted] = await this.db
         .insert(features)
         .values(record)
         .returning({ id: features.id });
-      
+
       // Update entity with generated ID
       return new Feature(feature.props, inserted.id);
     } else {
@@ -36,10 +101,10 @@ export class DrizzleFeatureRepository implements IFeatureRepository {
           status: record.status,
           validator: record.validator,
           metadata: record.metadata,
-          updated_at: record.updated_at
+          updated_at: record.updated_at,
         })
         .where(eq(features.id, feature.id));
-      
+
       return feature;
     }
   }
@@ -50,8 +115,8 @@ export class DrizzleFeatureRepository implements IFeatureRepository {
       .from(features)
       .where(eq(features.id, id))
       .limit(1);
-    
-    return record ? FeatureMapper.toDomain(record) : null;
+
+    return record ? this.hydrate(record) : null;
   }
 
   async findByKey(key: string): Promise<Feature | null> {
@@ -60,8 +125,8 @@ export class DrizzleFeatureRepository implements IFeatureRepository {
       .from(features)
       .where(eq(features.key, key))
       .limit(1);
-    
-    return record ? FeatureMapper.toDomain(record) : null;
+
+    return record ? this.hydrate(record) : null;
   }
 
   async findAll(filters?: FeatureFilterDto): Promise<Feature[]> {
@@ -88,8 +153,8 @@ export class DrizzleFeatureRepository implements IFeatureRepository {
           or(
             like(features.key, `%${filters.search}%`),
             like(features.display_name, `%${filters.search}%`),
-            like(features.description, `%${filters.search}%`)
-          )
+            like(features.description, `%${filters.search}%`),
+          ),
         );
       }
 
@@ -98,13 +163,21 @@ export class DrizzleFeatureRepository implements IFeatureRepository {
       }
 
       // Apply sorting
-      const sortBy = filters.sortBy || 'createdAt';
-      const sortOrder = filters.sortOrder || 'asc';
-      
-      if (sortBy === 'displayName') {
-        query = query.orderBy(sortOrder === 'desc' ? desc(features.display_name) : asc(features.display_name)) as typeof query;
+      const sortBy = filters.sortBy || "createdAt";
+      const sortOrder = filters.sortOrder || "asc";
+
+      if (sortBy === "displayName") {
+        query = query.orderBy(
+          sortOrder === "desc"
+            ? desc(features.display_name)
+            : asc(features.display_name),
+        ) as typeof query;
       } else {
-        query = query.orderBy(sortOrder === 'desc' ? desc(features.created_at) : asc(features.created_at)) as typeof query;
+        query = query.orderBy(
+          sortOrder === "desc"
+            ? desc(features.created_at)
+            : asc(features.created_at),
+        ) as typeof query;
       }
 
       query = applyPaging(query, filters.offset, filters.limit) as typeof query;
@@ -113,7 +186,7 @@ export class DrizzleFeatureRepository implements IFeatureRepository {
     }
 
     const records = await query;
-    return records.map(FeatureMapper.toDomain);
+    return Promise.all(records.map((r) => this.hydrate(r)));
   }
 
   async findByIds(ids: number[]): Promise<Feature[]> {
@@ -124,7 +197,7 @@ export class DrizzleFeatureRepository implements IFeatureRepository {
       .from(features)
       .where(inArray(features.id, ids));
 
-    return records.map(FeatureMapper.toDomain);
+    return Promise.all(records.map((r) => this.hydrate(r)));
   }
 
   async findByProduct(productId: number): Promise<Feature[]> {
@@ -141,18 +214,20 @@ export class DrizzleFeatureRepository implements IFeatureRepository {
         validator: features.validator,
         metadata: features.metadata,
         created_at: features.created_at,
-        updated_at: features.updated_at
+        updated_at: features.updated_at,
       })
       .from(features)
       .innerJoin(product_features, eq(features.id, product_features.feature_id))
       .where(eq(product_features.product_id, productId))
       .orderBy(asc(features.created_at));
 
-    return records.map(FeatureMapper.toDomain);
+    return Promise.all(records.map((r) => this.hydrate(r)));
   }
 
   async delete(id: number): Promise<void> {
-    await this.db.delete(features).where(eq(features.id, id));
+    await accountingDelete(async () => {
+      await this.db.delete(features).where(eq(features.id, id));
+    });
   }
 
   async hasProductAssociations(featureId: number): Promise<boolean> {

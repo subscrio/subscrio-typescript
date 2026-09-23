@@ -218,3 +218,9 @@ Issues and pull requests welcome in this repo. See [CONTRIBUTING.md](CONTRIBUTIN
 <p align="center">
   Maintained by <a href="https://github.com/jasenf">Jasen Fici</a> · Part of the <a href="https://github.com/subscrio">Subscrio</a> org
 </p>
+
+## Add-ons, usage quotas, credits, and timed access
+
+Subscrio supports product-owned add-ons and composition, atomic metered quotas, shared credit wallets with scheduled grants and a ledger, and timed subscription overrides. Existing feature-checker calls resolve add-ons and active overrides automatically. Configure feature resolution on product-feature associations. Define add-on contributions through add-on create/update, configure meters through feature create/update, and read usage through the metering object.
+
+These capabilities require schema 1.4.0 and compatible library/server versions. See the [entitlement guide](https://docs.subscrio.com/reference/entitlements-guide/) and the console sample for the TypeScript walkthrough. The documentation repository includes runnable TypeScript and .NET examples. Back up and migrate existing databases before upgrading all writers together.

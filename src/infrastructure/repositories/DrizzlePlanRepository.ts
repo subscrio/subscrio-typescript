@@ -1,12 +1,18 @@
-import { IPlanRepository } from '../../application/repositories/IPlanRepository.js';
-import { Plan, PlanFeatureValue } from '../../domain/entities/Plan.js';
-import { PlanMapper } from '../../application/mappers/PlanMapper.js';
-import { DrizzleDb } from '../database/drizzle.js';
-import { plans, plan_features, billing_cycles, products } from '../database/schema.js';
-import { eq, and, like, or, desc, asc, inArray } from 'drizzle-orm';
-import { PlanFilterDto } from '../../application/dtos/PlanDto.js';
-import { applyPaging } from './applyPaging.js';
-import { FeatureValueMapper } from '../../application/mappers/FeatureValueMapper.js';
+import { accountingDelete } from "../database/accountingDelete.js";
+import { IPlanRepository } from "../../application/repositories/IPlanRepository.js";
+import { Plan, PlanFeatureValue } from "../../domain/entities/Plan.js";
+import { PlanMapper } from "../../application/mappers/PlanMapper.js";
+import { DrizzleDb } from "../database/drizzle.js";
+import {
+  plans,
+  plan_features,
+  billing_cycles,
+  products,
+} from "../database/schema.js";
+import { eq, and, like, or, desc, asc, inArray } from "drizzle-orm";
+import { PlanFilterDto } from "../../application/dtos/PlanDto.js";
+import { applyPaging } from "./applyPaging.js";
+import { FeatureValueMapper } from "../../application/mappers/FeatureValueMapper.js";
 
 export class DrizzlePlanRepository implements IPlanRepository {
   constructor(private readonly db: DrizzleDb) {}
@@ -18,7 +24,7 @@ export class DrizzlePlanRepository implements IPlanRepository {
       .from(products)
       .where(eq(products.key, plan.productKey))
       .limit(1);
-    
+
     if (!product) {
       throw new Error(`Product with key '${plan.productKey}' not found`);
     }
@@ -29,18 +35,25 @@ export class DrizzlePlanRepository implements IPlanRepository {
       const [billingCycle] = await this.db
         .select({ id: billing_cycles.id })
         .from(billing_cycles)
-        .where(eq(billing_cycles.key, plan.props.onExpireTransitionToBillingCycleKey))
+        .where(
+          eq(
+            billing_cycles.key,
+            plan.props.onExpireTransitionToBillingCycleKey,
+          ),
+        )
         .limit(1);
-      
+
       if (!billingCycle) {
-        throw new Error(`Billing cycle with key '${plan.props.onExpireTransitionToBillingCycleKey}' not found`);
+        throw new Error(
+          `Billing cycle with key '${plan.props.onExpireTransitionToBillingCycleKey}' not found`,
+        );
       }
-      
+
       billingCycleId = billingCycle.id as number;
     }
 
     if (product.id === undefined) {
-      throw new Error('Product ID is undefined');
+      throw new Error("Product ID is undefined");
     }
 
     const record = PlanMapper.toPersistence(plan, product.id, billingCycleId);
@@ -52,28 +65,28 @@ export class DrizzlePlanRepository implements IPlanRepository {
         .insert(plans)
         .values(record)
         .returning({ id: plans.id });
-      
+
       savedPlanId = inserted.id;
-      
+
       // Insert feature values
       if (plan.props.featureValues.length > 0) {
-        const featureValueRecords = plan.props.featureValues.map(fv => ({
+        const featureValueRecords = plan.props.featureValues.map((fv) => ({
           plan_id: savedPlanId,
           feature_id: fv.featureId,
           value: fv.value,
           created_at: fv.createdAt,
-          updated_at: fv.updatedAt
+          updated_at: fv.updatedAt,
         }));
 
         await this.db.insert(plan_features).values(featureValueRecords);
       }
-      
+
       // Return entity with generated ID
       return new Plan(plan.props, savedPlanId);
     } else {
       // Update existing entity
       savedPlanId = plan.id;
-      
+
       await this.db
         .update(plans)
         .set({
@@ -82,32 +95,35 @@ export class DrizzlePlanRepository implements IPlanRepository {
           display_name: record.display_name,
           description: record.description,
           status: record.status,
-          on_expire_transition_to_billing_cycle_id: record.on_expire_transition_to_billing_cycle_id,
+          on_expire_transition_to_billing_cycle_id:
+            record.on_expire_transition_to_billing_cycle_id,
           metadata: record.metadata,
-          updated_at: record.updated_at
+          updated_at: record.updated_at,
         })
         .where(eq(plans.id, plan.id));
 
       // Delete existing feature values
-      await this.db.delete(plan_features).where(eq(plan_features.plan_id, plan.id));
+      await this.db
+        .delete(plan_features)
+        .where(eq(plan_features.plan_id, plan.id));
 
       // Insert new feature values
       if (plan.props.featureValues.length > 0) {
         if (savedPlanId === undefined) {
-          throw new Error('Plan ID is undefined after insert');
+          throw new Error("Plan ID is undefined after insert");
         }
 
-        const featureValueRecords = plan.props.featureValues.map(fv => ({
+        const featureValueRecords = plan.props.featureValues.map((fv) => ({
           plan_id: savedPlanId,
           feature_id: fv.featureId,
           value: fv.value,
           created_at: fv.createdAt,
-          updated_at: fv.updatedAt
+          updated_at: fv.updatedAt,
         }));
 
         await this.db.insert(plan_features).values(featureValueRecords);
       }
-      
+
       return plan;
     }
   }
@@ -118,14 +134,17 @@ export class DrizzlePlanRepository implements IPlanRepository {
       .select({
         plans: plans,
         product_key: products.key,
-        on_expire_transition_to_billing_cycle_key: billing_cycles.key
+        on_expire_transition_to_billing_cycle_key: billing_cycles.key,
       })
       .from(plans)
       .innerJoin(products, eq(plans.product_id, products.id))
-      .leftJoin(billing_cycles, eq(plans.on_expire_transition_to_billing_cycle_id, billing_cycles.id))
+      .leftJoin(
+        billing_cycles,
+        eq(plans.on_expire_transition_to_billing_cycle_id, billing_cycles.id),
+      )
       .where(eq(plans.id, id))
       .limit(1);
-    
+
     if (!result) return null;
 
     const featureValues = await this.loadFeatureValues(result.plans.id);
@@ -133,7 +152,8 @@ export class DrizzlePlanRepository implements IPlanRepository {
     const recordWithKeys = {
       ...result.plans,
       product_key: result.product_key,
-      on_expire_transition_to_billing_cycle_key: result.on_expire_transition_to_billing_cycle_key ?? null
+      on_expire_transition_to_billing_cycle_key:
+        result.on_expire_transition_to_billing_cycle_key ?? null,
     };
     return PlanMapper.toDomain(recordWithKeys, featureValues);
   }
@@ -144,14 +164,17 @@ export class DrizzlePlanRepository implements IPlanRepository {
       .select({
         plans: plans,
         product_key: products.key,
-        on_expire_transition_to_billing_cycle_key: billing_cycles.key
+        on_expire_transition_to_billing_cycle_key: billing_cycles.key,
       })
       .from(plans)
       .innerJoin(products, eq(plans.product_id, products.id))
-      .leftJoin(billing_cycles, eq(plans.on_expire_transition_to_billing_cycle_id, billing_cycles.id))
+      .leftJoin(
+        billing_cycles,
+        eq(plans.on_expire_transition_to_billing_cycle_id, billing_cycles.id),
+      )
       .where(eq(plans.key, key))
       .limit(1);
-    
+
     if (!result) return null;
 
     const featureValues = await this.loadFeatureValues(result.plans.id);
@@ -159,7 +182,8 @@ export class DrizzlePlanRepository implements IPlanRepository {
     const recordWithKeys = {
       ...result.plans,
       product_key: result.product_key,
-      on_expire_transition_to_billing_cycle_key: result.on_expire_transition_to_billing_cycle_key ?? null
+      on_expire_transition_to_billing_cycle_key:
+        result.on_expire_transition_to_billing_cycle_key ?? null,
     };
     return PlanMapper.toDomain(recordWithKeys, featureValues);
   }
@@ -179,11 +203,14 @@ export class DrizzlePlanRepository implements IPlanRepository {
       .select({
         plans: plans,
         product_key: products.key,
-        on_expire_transition_to_billing_cycle_key: billing_cycles.key
+        on_expire_transition_to_billing_cycle_key: billing_cycles.key,
       })
       .from(plans)
       .innerJoin(products, eq(plans.product_id, products.id))
-      .leftJoin(billing_cycles, eq(plans.on_expire_transition_to_billing_cycle_id, billing_cycles.id))
+      .leftJoin(
+        billing_cycles,
+        eq(plans.on_expire_transition_to_billing_cycle_id, billing_cycles.id),
+      )
       .where(eq(products.key, productKey))
       .orderBy(asc(plans.created_at));
 
@@ -194,7 +221,8 @@ export class DrizzlePlanRepository implements IPlanRepository {
       const recordWithKeys = {
         ...result.plans,
         product_key: result.product_key,
-        on_expire_transition_to_billing_cycle_key: result.on_expire_transition_to_billing_cycle_key ?? null
+        on_expire_transition_to_billing_cycle_key:
+          result.on_expire_transition_to_billing_cycle_key ?? null,
       };
       plansWithValues.push(PlanMapper.toDomain(recordWithKeys, featureValues));
     }
@@ -207,11 +235,14 @@ export class DrizzlePlanRepository implements IPlanRepository {
       .select({
         plans: plans,
         product_key: products.key,
-        on_expire_transition_to_billing_cycle_key: billing_cycles.key
+        on_expire_transition_to_billing_cycle_key: billing_cycles.key,
       })
       .from(plans)
       .innerJoin(products, eq(plans.product_id, products.id))
-      .leftJoin(billing_cycles, eq(plans.on_expire_transition_to_billing_cycle_id, billing_cycles.id));
+      .leftJoin(
+        billing_cycles,
+        eq(plans.on_expire_transition_to_billing_cycle_id, billing_cycles.id),
+      );
 
     if (filters) {
       const conditions = [];
@@ -231,8 +262,8 @@ export class DrizzlePlanRepository implements IPlanRepository {
           or(
             like(plans.key, `%${filters.search}%`),
             like(plans.display_name, `%${filters.search}%`),
-            like(plans.description, `%${filters.search}%`)
-          )
+            like(plans.description, `%${filters.search}%`),
+          ),
         );
       }
 
@@ -241,13 +272,19 @@ export class DrizzlePlanRepository implements IPlanRepository {
       }
 
       // Apply sorting
-      const sortBy = filters.sortBy || 'createdAt';
-      const sortOrder = filters.sortOrder || 'asc';
-      
-      if (sortBy === 'displayName') {
-        query = query.orderBy(sortOrder === 'desc' ? desc(plans.display_name) : asc(plans.display_name)) as typeof query;
+      const sortBy = filters.sortBy || "createdAt";
+      const sortOrder = filters.sortOrder || "asc";
+
+      if (sortBy === "displayName") {
+        query = query.orderBy(
+          sortOrder === "desc"
+            ? desc(plans.display_name)
+            : asc(plans.display_name),
+        ) as typeof query;
       } else {
-        query = query.orderBy(sortOrder === 'desc' ? desc(plans.created_at) : asc(plans.created_at)) as typeof query;
+        query = query.orderBy(
+          sortOrder === "desc" ? desc(plans.created_at) : asc(plans.created_at),
+        ) as typeof query;
       }
 
       query = applyPaging(query, filters.offset, filters.limit) as typeof query;
@@ -256,7 +293,7 @@ export class DrizzlePlanRepository implements IPlanRepository {
     }
 
     const results = await query;
-    
+
     const plansWithValues = [];
     for (const result of results) {
       const featureValues = await this.loadFeatureValues(result.plans.id);
@@ -264,13 +301,13 @@ export class DrizzlePlanRepository implements IPlanRepository {
       const recordWithKeys = {
         ...result.plans,
         product_key: result.product_key,
-        on_expire_transition_to_billing_cycle_key: result.on_expire_transition_to_billing_cycle_key ?? null
+        on_expire_transition_to_billing_cycle_key:
+          result.on_expire_transition_to_billing_cycle_key ?? null,
       };
       plansWithValues.push(PlanMapper.toDomain(recordWithKeys, featureValues));
     }
     return plansWithValues;
   }
-
 
   async findByIds(ids: number[]): Promise<Plan[]> {
     if (ids.length === 0) return [];
@@ -280,11 +317,14 @@ export class DrizzlePlanRepository implements IPlanRepository {
       .select({
         plans: plans,
         product_key: products.key,
-        on_expire_transition_to_billing_cycle_key: billing_cycles.key
+        on_expire_transition_to_billing_cycle_key: billing_cycles.key,
       })
       .from(plans)
       .innerJoin(products, eq(plans.product_id, products.id))
-      .leftJoin(billing_cycles, eq(plans.on_expire_transition_to_billing_cycle_id, billing_cycles.id))
+      .leftJoin(
+        billing_cycles,
+        eq(plans.on_expire_transition_to_billing_cycle_id, billing_cycles.id),
+      )
       .where(inArray(plans.id, ids));
 
     const plansWithValues = [];
@@ -294,7 +334,8 @@ export class DrizzlePlanRepository implements IPlanRepository {
       const recordWithKeys = {
         ...result.plans,
         product_key: result.product_key,
-        on_expire_transition_to_billing_cycle_key: result.on_expire_transition_to_billing_cycle_key ?? null
+        on_expire_transition_to_billing_cycle_key:
+          result.on_expire_transition_to_billing_cycle_key ?? null,
       };
       plansWithValues.push(PlanMapper.toDomain(recordWithKeys, featureValues));
     }
@@ -308,15 +349,17 @@ export class DrizzlePlanRepository implements IPlanRepository {
       .from(billing_cycles)
       .where(eq(billing_cycles.id, billingCycleId))
       .limit(1);
-    
+
     if (!billingCycle) return null;
-    
+
     // Use findById which already has all the necessary joins
     return this.findById(billingCycle.plan_id as number);
   }
 
   async delete(id: number): Promise<void> {
-    await this.db.delete(plans).where(eq(plans.id, id));
+    await accountingDelete(async () => {
+      await this.db.delete(plans).where(eq(plans.id, id));
+    });
   }
 
   async hasBillingCycles(planId: number): Promise<boolean> {
@@ -336,16 +379,20 @@ export class DrizzlePlanRepository implements IPlanRepository {
       .from(billing_cycles)
       .where(eq(billing_cycles.key, billingCycleKey))
       .limit(1);
-    
+
     if (!billingCycle) return false;
 
     const [record] = await this.db
       .select({ id: plans.id })
       .from(plans)
-      .where(eq(plans.on_expire_transition_to_billing_cycle_id, billingCycle.id as number))
+      .where(
+        eq(
+          plans.on_expire_transition_to_billing_cycle_id,
+          billingCycle.id as number,
+        ),
+      )
       .limit(1);
 
     return !!record;
   }
-
 }

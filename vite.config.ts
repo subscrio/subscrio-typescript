@@ -15,6 +15,7 @@ export default defineConfig({
     },
     rollupOptions: {
       external: [
+        /^node:/,
         'pg',
         'drizzle-orm',
         'stripe',

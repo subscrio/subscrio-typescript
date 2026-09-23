@@ -1,18 +1,19 @@
-import { Entity } from '../base/Entity.js';
-import { SubscriptionStatus } from '../value-objects/SubscriptionStatus.js';
-import { OverrideType } from '../value-objects/OverrideType.js';
-import { DomainError } from '../errors/DomainError.js';
-import { now } from '../clock.js';
+import { Entity } from "../base/Entity.js";
+import { SubscriptionStatus } from "../value-objects/SubscriptionStatus.js";
+import { OverrideType } from "../value-objects/OverrideType.js";
+import { DomainError } from "../errors/DomainError.js";
+import { now } from "../clock.js";
 
 export interface FeatureOverride {
   featureId: number;
   value: string;
   type: OverrideType;
+  expiresAt?: Date | null;
   createdAt: Date;
 }
 
 export interface SubscriptionProps {
-  key: string;  // External reference key for this subscription
+  key: string; // External reference key for this subscription
   customerId: number;
   planId: number;
   billingCycleId: number;
@@ -57,7 +58,9 @@ export class Subscription extends Entity<SubscriptionProps> {
 
   cancel(): void {
     if (this.status === SubscriptionStatus.Cancelled) {
-      throw new DomainError('Subscription is already cancelled. Current status: ' + this.status);
+      throw new DomainError(
+        "Subscription is already cancelled. Current status: " + this.status,
+      );
     }
     this.props.cancellationDate = now();
     this.props.updatedAt = now();
@@ -118,33 +121,46 @@ export class Subscription extends Entity<SubscriptionProps> {
     this.props.updatedAt = now();
   }
 
-  addFeatureOverride(featureId: number, value: string, type: OverrideType): void {
+  addFeatureOverride(
+    featureId: number,
+    value: string,
+    type: OverrideType,
+    expiresAt?: Date | null,
+  ): void {
     // Remove existing override if present
     this.removeFeatureOverride(featureId);
-    
+
     this.props.featureOverrides.push({
       featureId,
       value,
       type,
-      createdAt: now()
+      expiresAt: expiresAt ?? null,
+      createdAt: now(),
     });
     this.props.updatedAt = now();
   }
 
   removeFeatureOverride(featureId: number): void {
     this.props.featureOverrides = this.props.featureOverrides.filter(
-      o => o.featureId !== featureId
+      (o) => o.featureId !== featureId,
     );
     this.props.updatedAt = now();
   }
 
-  getFeatureOverride(featureId: number): FeatureOverride | null {
-    return this.props.featureOverrides.find(o => o.featureId === featureId) || null;
+  getFeatureOverride(
+    featureId: number,
+    at: Date = now(),
+  ): FeatureOverride | null {
+    return (
+      this.props.featureOverrides.find(
+        (o) => o.featureId === featureId && (!o.expiresAt || o.expiresAt > at),
+      ) || null
+    );
   }
 
   clearTemporaryOverrides(): void {
     this.props.featureOverrides = this.props.featureOverrides.filter(
-      o => o.type === OverrideType.Permanent
+      (o) => o.type !== OverrideType.Temporary,
     );
     this.props.updatedAt = now();
   }
@@ -153,6 +169,4 @@ export class Subscription extends Entity<SubscriptionProps> {
   canDelete(): boolean {
     return true;
   }
-
 }
-

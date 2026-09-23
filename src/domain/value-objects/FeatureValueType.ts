@@ -1,6 +1,6 @@
 export enum FeatureValueType {
-  Toggle = 'toggle',
-  Numeric = 'numeric',
-  Text = 'text'
+  Toggle = "toggle",
+  Numeric = "numeric",
+  Text = "text",
+  Metered = "metered",
 }
-

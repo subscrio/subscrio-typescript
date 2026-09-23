@@ -1,37 +1,47 @@
-import { ISubscriptionRepository } from '../repositories/ISubscriptionRepository.js';
-import { ICustomerRepository } from '../repositories/ICustomerRepository.js';
-import { IPlanRepository } from '../repositories/IPlanRepository.js';
-import { IBillingCycleRepository } from '../repositories/IBillingCycleRepository.js';
-import { IFeatureRepository } from '../repositories/IFeatureRepository.js';
-import { IProductRepository } from '../repositories/IProductRepository.js';
-import { 
-  CreateSubscriptionDto, 
-  CreateSubscriptionDtoSchema, 
-  UpdateSubscriptionDto, 
+import { CatalogReader } from "../../infrastructure/repositories/CatalogReader.js";
+import { Clock, systemClock } from "../utils/Clock.js";
+import { utcDate } from "../../domain/services/AccountingArithmetic.js";
+import { ISubscriptionRepository } from "../repositories/ISubscriptionRepository.js";
+import { ICustomerRepository } from "../repositories/ICustomerRepository.js";
+import { IPlanRepository } from "../repositories/IPlanRepository.js";
+import { IBillingCycleRepository } from "../repositories/IBillingCycleRepository.js";
+import { IFeatureRepository } from "../repositories/IFeatureRepository.js";
+import { IProductRepository } from "../repositories/IProductRepository.js";
+import {
+  CreateSubscriptionDto,
+  CreateSubscriptionDtoSchema,
+  UpdateSubscriptionDto,
   UpdateSubscriptionDtoSchema,
   SubscriptionFilterDto,
   SubscriptionFilterDtoSchema,
   DetailedSubscriptionFilterDto,
   DetailedSubscriptionFilterDtoSchema,
-  SubscriptionDto 
-} from '../dtos/SubscriptionDto.js';
-import { SubscriptionMapper } from '../mappers/SubscriptionMapper.js';
-import { Subscription } from '../../domain/entities/Subscription.js';
-import { SubscriptionStatus } from '../../domain/value-objects/SubscriptionStatus.js';
-import { OverrideType } from '../../domain/value-objects/OverrideType.js';
-import { now } from '../../infrastructure/utils/date.js';
-import { 
-  ValidationError, 
-  NotFoundError, 
-  ConflictError, 
-  DomainError 
-} from '../errors/index.js';
-import { FeatureValueValidator } from '../utils/FeatureValueValidator.js';
-import { HookDispatcher } from '../hooks/HookDispatcher.js';
-import { HookEvents, type HookSource, type SubscriptionMutationHookEvent } from '../hooks/types.js';
-import { cloneJson } from '../hooks/cloneJson.js';
-import { applySubscriptionDtoMutation } from '../hooks/applySubscriptionDtoMutation.js';
-import { compactDefined, revalidateAfterHook } from '../utils/ValidationGuard.js';
+  SubscriptionDto,
+} from "../dtos/SubscriptionDto.js";
+import { SubscriptionMapper } from "../mappers/SubscriptionMapper.js";
+import { Subscription } from "../../domain/entities/Subscription.js";
+import { SubscriptionStatus } from "../../domain/value-objects/SubscriptionStatus.js";
+import { OverrideType } from "../../domain/value-objects/OverrideType.js";
+import { now } from "../../infrastructure/utils/date.js";
+import {
+  ValidationError,
+  NotFoundError,
+  ConflictError,
+  DomainError,
+} from "../errors/index.js";
+import { FeatureValueValidator } from "../utils/FeatureValueValidator.js";
+import { HookDispatcher } from "../hooks/HookDispatcher.js";
+import {
+  HookEvents,
+  type HookSource,
+  type SubscriptionMutationHookEvent,
+} from "../hooks/types.js";
+import { cloneJson } from "../hooks/cloneJson.js";
+import { applySubscriptionDtoMutation } from "../hooks/applySubscriptionDtoMutation.js";
+import {
+  compactDefined,
+  revalidateAfterHook,
+} from "../utils/ValidationGuard.js";
 
 /**
  * Transition report for expired subscription processing
@@ -47,6 +57,23 @@ export interface TransitionExpiredSubscriptionsReport {
 }
 
 export class SubscriptionManagementService {
+  /** @internal */ addonService?: import("./SubscriptionAddonManager.js").SubscriptionAddonManager;
+  async attachAddon(
+    subscriptionKey: string,
+    addonKey: string,
+    quantity = 1,
+  ): Promise<import("../dtos/AddonDto.js").SubscriptionAddonDto> {
+    return this.addonService!.attachAddon(subscriptionKey, addonKey, quantity);
+  }
+  async detachAddon(subscriptionKey: string, addonKey: string): Promise<void> {
+    await this.addonService!.detachAddon(subscriptionKey, addonKey);
+  }
+  async getAddons(
+    subscriptionKey: string,
+    filter: import("../dtos/PaginationDto.js").PageFilter = {},
+  ): Promise<import("../dtos/AddonDto.js").SubscriptionAddonDto[]> {
+    return this.addonService!.listSubscriptionAddons(subscriptionKey, filter);
+  }
   constructor(
     private readonly subscriptionRepository: ISubscriptionRepository,
     private readonly customerRepository: ICustomerRepository,
@@ -54,24 +81,39 @@ export class SubscriptionManagementService {
     private readonly billingCycleRepository: IBillingCycleRepository,
     private readonly featureRepository: IFeatureRepository,
     private readonly productRepository: IProductRepository,
-    private readonly hooks: HookDispatcher = new HookDispatcher()
+    private readonly hooks: HookDispatcher = new HookDispatcher(),
+    private readonly clock: Clock = systemClock,
+    private readonly catalog?: CatalogReader,
   ) {}
 
   private async emitSubscriptionBefore(
-    type: SubscriptionMutationHookEvent['type'],
+    type: SubscriptionMutationHookEvent["type"],
     source: HookSource,
     subscription: Subscription,
     oldDto: SubscriptionDto | null,
     newDto: SubscriptionDto | null,
-    extras?: { featureKey?: string; value?: string; overrideType?: string }
-  ): Promise<{ newDto: SubscriptionDto | null; extras: { featureKey?: string; value?: string; overrideType?: string } }> {
+    extras?: {
+      featureKey?: string;
+      value?: string;
+      overrideType?: string;
+      expiresAt?: string | null;
+    },
+  ): Promise<{
+    newDto: SubscriptionDto | null;
+    extras: {
+      featureKey?: string;
+      value?: string;
+      overrideType?: string;
+      expiresAt?: string | null;
+    };
+  }> {
     const baseExtras = { ...extras };
     if (!this.hooks.hasListeners(type)) {
       return { newDto, extras: baseExtras };
     }
     const payload: SubscriptionMutationHookEvent = {
       type,
-      phase: 'before',
+      phase: "before",
       source,
       occurredAt: new Date().toISOString(),
       entityId: subscription.id ?? null,
@@ -87,22 +129,31 @@ export class SubscriptionManagementService {
         featureKey: payload.featureKey ?? baseExtras.featureKey,
         value: payload.value ?? baseExtras.value,
         overrideType: payload.overrideType ?? baseExtras.overrideType,
+        expiresAt:
+          payload.expiresAt === undefined
+            ? baseExtras.expiresAt
+            : payload.expiresAt,
       },
     };
   }
 
   private async emitSubscriptionAfter(
-    type: SubscriptionMutationHookEvent['type'],
+    type: SubscriptionMutationHookEvent["type"],
     source: HookSource,
     subscription: Subscription,
     oldDto: SubscriptionDto | null,
     newDto: SubscriptionDto | null,
-    extras?: { featureKey?: string; value?: string; overrideType?: string }
+    extras?: {
+      featureKey?: string;
+      value?: string;
+      overrideType?: string;
+      expiresAt?: string | null;
+    },
   ): Promise<void> {
     if (!this.hooks.hasListeners(type)) return;
     await this.hooks.emit(type, {
       type,
-      phase: 'after',
+      phase: "after",
       source,
       occurredAt: new Date().toISOString(),
       entityId: subscription.id ?? null,
@@ -113,21 +164,27 @@ export class SubscriptionManagementService {
     });
   }
 
-  private async toSubscriptionDto(subscription: Subscription): Promise<SubscriptionDto> {
+  private async toSubscriptionDto(
+    subscription: Subscription,
+  ): Promise<SubscriptionDto> {
     const keys = await this.resolveSubscriptionKeys(subscription);
     const featureOverrides = await this.toFeatureOverrideDtos(subscription);
-    return SubscriptionMapper.toDto(
-      subscription,
-      keys.customerKey,
-      keys.productKey,
-      keys.planKey,
-      keys.billingCycleKey,
-      undefined,
-      featureOverrides
+    return await this.enrich(
+      SubscriptionMapper.toDto(
+        subscription,
+        keys.customerKey,
+        keys.productKey,
+        keys.planKey,
+        keys.billingCycleKey,
+        undefined,
+        featureOverrides,
+      ),
     );
   }
 
-  private async toFeatureOverrideDtos(subscription: Subscription): Promise<import('../dtos/SubscriptionDto.js').FeatureOverrideDto[]> {
+  private async toFeatureOverrideDtos(
+    subscription: Subscription,
+  ): Promise<import("../dtos/SubscriptionDto.js").FeatureOverrideDto[]> {
     const overrides = [];
     for (const override of subscription.props.featureOverrides) {
       const feature = await this.featureRepository.findById(override.featureId);
@@ -136,6 +193,8 @@ export class SubscriptionManagementService {
         featureKey: feature.key,
         value: override.value,
         type: override.type,
+        expiresAt: override.expiresAt?.toISOString() ?? null,
+        isActive: !override.expiresAt || override.expiresAt > this.clock.now(),
         createdAt: override.createdAt.toISOString(),
       });
     }
@@ -149,12 +208,14 @@ export class SubscriptionManagementService {
     billingCycleKey: string;
   }> {
     // Get customer
-    const customer = await this.customerRepository.findById(subscription.customerId);
+    const customer = await this.customerRepository.findById(
+      subscription.customerId,
+    );
     if (!customer) {
       // This should never happen in normal operation, but log error with subscription key
       throw new NotFoundError(
         `Customer not found for subscription '${subscription.key}'. ` +
-        'This indicates data integrity issue - subscription references invalid customer.'
+          "This indicates data integrity issue - subscription references invalid customer.",
       );
     }
 
@@ -164,17 +225,19 @@ export class SubscriptionManagementService {
       // This should never happen in normal operation, but log error with subscription key
       throw new NotFoundError(
         `Plan not found for subscription '${subscription.key}'. ` +
-        'This indicates data integrity issue - subscription references invalid plan.'
+          "This indicates data integrity issue - subscription references invalid plan.",
       );
     }
 
     // Get billing cycle (required)
-    const cycle = await this.billingCycleRepository.findById(subscription.props.billingCycleId);
+    const cycle = await this.billingCycleRepository.findById(
+      subscription.props.billingCycleId,
+    );
     if (!cycle) {
       // This should never happen in normal operation, but log error with subscription key
       throw new NotFoundError(
         `Billing cycle not found for subscription '${subscription.key}'. ` +
-        'This indicates data integrity issue - subscription references invalid billing cycle.'
+          "This indicates data integrity issue - subscription references invalid billing cycle.",
       );
     }
 
@@ -182,36 +245,48 @@ export class SubscriptionManagementService {
       customerKey: customer.key,
       productKey: plan.productKey,
       planKey: plan.key,
-      billingCycleKey: cycle.key
+      billingCycleKey: cycle.key,
     };
   }
 
-  async createSubscription(dto: CreateSubscriptionDto): Promise<SubscriptionDto> {
+  async createSubscription(
+    dto: CreateSubscriptionDto,
+  ): Promise<SubscriptionDto> {
     const validationResult = CreateSubscriptionDtoSchema.safeParse(dto);
     if (!validationResult.success) {
       throw new ValidationError(
-        'Invalid subscription data',
-        validationResult.error.issues
+        "Invalid subscription data",
+        validationResult.error.issues,
       );
     }
     const validatedDto = validationResult.data;
 
     // Verify customer exists
-    const customer = await this.customerRepository.findByKey(validatedDto.customerKey);
+    const customer = await this.customerRepository.findByKey(
+      validatedDto.customerKey,
+    );
     if (!customer) {
-      throw new NotFoundError(`Customer with key '${validatedDto.customerKey}' not found`);
+      throw new NotFoundError(
+        `Customer with key '${validatedDto.customerKey}' not found`,
+      );
     }
 
     // Get billing cycle and derive plan/product from it
-    const billingCycle = await this.billingCycleRepository.findByKey(validatedDto.billingCycleKey);
+    const billingCycle = await this.billingCycleRepository.findByKey(
+      validatedDto.billingCycleKey,
+    );
     if (!billingCycle) {
-      throw new NotFoundError(`Billing cycle with key '${validatedDto.billingCycleKey}' not found`);
+      throw new NotFoundError(
+        `Billing cycle with key '${validatedDto.billingCycleKey}' not found`,
+      );
     }
 
     // Get plan from billing cycle
     const plan = await this.planRepository.findById(billingCycle.props.planId);
     if (!plan) {
-      throw new NotFoundError(`Plan not found for billing cycle '${validatedDto.billingCycleKey}'`);
+      throw new NotFoundError(
+        `Plan not found for billing cycle '${validatedDto.billingCycleKey}'`,
+      );
     }
 
     // Get product from plan
@@ -224,41 +299,58 @@ export class SubscriptionManagementService {
     const billingCycleId = billingCycle.id!;
 
     // Check for duplicate subscription key
-    const existingKey = await this.subscriptionRepository.findByKey(validatedDto.key);
+    const existingKey = await this.subscriptionRepository.findByKey(
+      validatedDto.key,
+    );
     if (existingKey) {
-      throw new ConflictError(`Subscription with key '${validatedDto.key}' already exists`);
+      throw new ConflictError(
+        `Subscription with key '${validatedDto.key}' already exists`,
+      );
     }
 
     // Check for duplicate Stripe subscription ID if provided
     if (validatedDto.stripeSubscriptionId) {
-      const existing = await this.subscriptionRepository.findByStripeId(validatedDto.stripeSubscriptionId);
+      const existing = await this.subscriptionRepository.findByStripeId(
+        validatedDto.stripeSubscriptionId,
+      );
       if (existing) {
-        throw new ConflictError(`Subscription with Stripe ID '${validatedDto.stripeSubscriptionId}' already exists`);
+        throw new ConflictError(
+          `Subscription with Stripe ID '${validatedDto.stripeSubscriptionId}' already exists`,
+        );
       }
     }
 
     // Entities from repository always have IDs (BIGSERIAL PRIMARY KEY)
     // billingCycleId comes from findByKey lookup, so it's guaranteed to have an ID if billingCycle exists
-    const trialEndDate = validatedDto.trialEndDate ? new Date(validatedDto.trialEndDate) : undefined;
-    
+    const trialEndDate = validatedDto.trialEndDate
+      ? new Date(validatedDto.trialEndDate)
+      : undefined;
+
     // Calculate currentPeriodEnd based on billing cycle duration
-    const currentPeriodStart = validatedDto.currentPeriodStart ? new Date(validatedDto.currentPeriodStart) : now();
-    const currentPeriodEnd = validatedDto.currentPeriodEnd 
-      ? new Date(validatedDto.currentPeriodEnd) 
+    const currentPeriodStart = validatedDto.currentPeriodStart
+      ? new Date(validatedDto.currentPeriodStart)
+      : now();
+    const currentPeriodEnd = validatedDto.currentPeriodEnd
+      ? new Date(validatedDto.currentPeriodEnd)
       : this.calculatePeriodEnd(currentPeriodStart, billingCycle);
-    
-    
+
     // Create domain entity (no ID - database will generate)
     const subscription = new Subscription({
-      key: validatedDto.key,  // User-supplied key
+      key: validatedDto.key, // User-supplied key
       customerId: customer.id!,
       planId: plan.id!,
       billingCycleId: billingCycleId!,
-      status: SubscriptionStatus.Active,  // Default status, will be calculated dynamically
+      status: SubscriptionStatus.Active, // Default status, will be calculated dynamically
       isArchived: false,
-      activationDate: validatedDto.activationDate ? new Date(validatedDto.activationDate) : now(),
-      expirationDate: validatedDto.expirationDate ? new Date(validatedDto.expirationDate) : undefined,
-      cancellationDate: validatedDto.cancellationDate ? new Date(validatedDto.cancellationDate) : undefined,
+      activationDate: validatedDto.activationDate
+        ? new Date(validatedDto.activationDate)
+        : now(),
+      expirationDate: validatedDto.expirationDate
+        ? new Date(validatedDto.expirationDate)
+        : undefined,
+      cancellationDate: validatedDto.cancellationDate
+        ? new Date(validatedDto.cancellationDate)
+        : undefined,
       trialEndDate,
       currentPeriodStart,
       currentPeriodEnd,
@@ -266,24 +358,28 @@ export class SubscriptionManagementService {
       featureOverrides: [],
       metadata: validatedDto.metadata,
       createdAt: now(),
-      updatedAt: now()
+      updatedAt: now(),
     });
 
-    if (this.hooks.hasListeners(HookEvents.SubscriptionCreatedBefore) ||
-        this.hooks.hasListeners(HookEvents.SubscriptionCreatedAfter)) {
-      let proposed = SubscriptionMapper.toDto(
-        subscription,
-        customer.key,
-        product.key,
-        plan.key,
-        billingCycle.key
+    if (
+      this.hooks.hasListeners(HookEvents.SubscriptionCreatedBefore) ||
+      this.hooks.hasListeners(HookEvents.SubscriptionCreatedAfter)
+    ) {
+      let proposed = await this.enrich(
+        SubscriptionMapper.toDto(
+          subscription,
+          customer.key,
+          product.key,
+          plan.key,
+          billingCycle.key,
+        ),
       );
       const before = await this.emitSubscriptionBefore(
         HookEvents.SubscriptionCreatedBefore,
-        'api',
+        "api",
         subscription,
         null,
-        proposed
+        proposed,
       );
       proposed = before.newDto ?? proposed;
       revalidateAfterHook(
@@ -301,61 +397,76 @@ export class SubscriptionManagementService {
           stripeSubscriptionId: proposed.stripeSubscriptionId,
           metadata: proposed.metadata,
         }),
-        'subscription data'
+        "subscription data",
       );
-      applySubscriptionDtoMutation(subscription, proposed, { allowKeyChange: true });
+      applySubscriptionDtoMutation(subscription, proposed, {
+        allowKeyChange: true,
+      });
 
       if (subscription.key !== validatedDto.key) {
-        const keyTaken = await this.subscriptionRepository.findByKey(subscription.key);
+        const keyTaken = await this.subscriptionRepository.findByKey(
+          subscription.key,
+        );
         if (keyTaken) {
-          throw new ConflictError(`Subscription with key '${subscription.key}' already exists`);
+          throw new ConflictError(
+            `Subscription with key '${subscription.key}' already exists`,
+          );
         }
       }
     }
-    
+
     // Save and get entity with generated ID
-    const savedSubscription = await this.subscriptionRepository.save(subscription);
+    const savedSubscription =
+      await this.subscriptionRepository.save(subscription);
 
     const keys = await this.resolveSubscriptionKeys(savedSubscription);
-    const savedDto = SubscriptionMapper.toDto(
-      savedSubscription,
-      keys.customerKey,
-      keys.productKey,
-      keys.planKey,
-      keys.billingCycleKey,
-      undefined,
-      await this.toFeatureOverrideDtos(savedSubscription)
+    const savedDto = await this.enrich(
+      SubscriptionMapper.toDto(
+        savedSubscription,
+        keys.customerKey,
+        keys.productKey,
+        keys.planKey,
+        keys.billingCycleKey,
+        undefined,
+        await this.toFeatureOverrideDtos(savedSubscription),
+      ),
     );
     await this.emitSubscriptionAfter(
       HookEvents.SubscriptionCreatedAfter,
-      'api',
+      "api",
       savedSubscription,
       null,
-      savedDto
+      savedDto,
     );
     return savedDto;
   }
 
-  async updateSubscription(subscriptionKey: string, dto: UpdateSubscriptionDto): Promise<SubscriptionDto> {
+  async updateSubscription(
+    subscriptionKey: string,
+    dto: UpdateSubscriptionDto,
+  ): Promise<SubscriptionDto> {
     const validationResult = UpdateSubscriptionDtoSchema.safeParse(dto);
     if (!validationResult.success) {
       throw new ValidationError(
-        'Invalid update data',
-        validationResult.error.issues
+        "Invalid update data",
+        validationResult.error.issues,
       );
     }
     const validatedDto = validationResult.data;
-    
-    const subscription = await this.subscriptionRepository.findByKey(subscriptionKey);
+
+    const subscription =
+      await this.subscriptionRepository.findByKey(subscriptionKey);
     if (!subscription) {
-      throw new NotFoundError(`Subscription with key '${subscriptionKey}' not found`);
+      throw new NotFoundError(
+        `Subscription with key '${subscriptionKey}' not found`,
+      );
     }
 
     // Block updates if subscription is archived
     if (subscription.isArchived) {
       throw new DomainError(
         `Cannot update archived subscription with key '${subscriptionKey}'. ` +
-        'Please unarchive the subscription first.'
+          "Please unarchive the subscription first.",
       );
     }
 
@@ -363,10 +474,14 @@ export class SubscriptionManagementService {
 
     // Update properties (activationDate is immutable)
     if (validatedDto.expirationDate !== undefined) {
-      subscription.props.expirationDate = validatedDto.expirationDate ? new Date(validatedDto.expirationDate) : undefined;
+      subscription.props.expirationDate = validatedDto.expirationDate
+        ? new Date(validatedDto.expirationDate)
+        : undefined;
     }
     if (validatedDto.cancellationDate !== undefined) {
-      subscription.props.cancellationDate = validatedDto.cancellationDate ? new Date(validatedDto.cancellationDate) : undefined;
+      subscription.props.cancellationDate = validatedDto.cancellationDate
+        ? new Date(validatedDto.cancellationDate)
+        : undefined;
     }
     if (validatedDto.clearTrialEndDate) {
       subscription.props.trialEndDate = undefined;
@@ -376,19 +491,27 @@ export class SubscriptionManagementService {
         : undefined;
     }
     if (validatedDto.currentPeriodStart !== undefined) {
-      subscription.props.currentPeriodStart = validatedDto.currentPeriodStart ? new Date(validatedDto.currentPeriodStart) : undefined;
+      subscription.props.currentPeriodStart = validatedDto.currentPeriodStart
+        ? new Date(validatedDto.currentPeriodStart)
+        : undefined;
     }
     if (validatedDto.currentPeriodEnd !== undefined) {
-      subscription.props.currentPeriodEnd = validatedDto.currentPeriodEnd ? new Date(validatedDto.currentPeriodEnd) : undefined;
+      subscription.props.currentPeriodEnd = validatedDto.currentPeriodEnd
+        ? new Date(validatedDto.currentPeriodEnd)
+        : undefined;
     }
     if (validatedDto.metadata !== undefined) {
       subscription.props.metadata = validatedDto.metadata;
     }
     if (validatedDto.billingCycleKey !== undefined) {
       // Find the new billing cycle
-      const billingCycle = await this.billingCycleRepository.findByKey(validatedDto.billingCycleKey);
+      const billingCycle = await this.billingCycleRepository.findByKey(
+        validatedDto.billingCycleKey,
+      );
       if (!billingCycle) {
-        throw new NotFoundError(`Billing cycle with key '${validatedDto.billingCycleKey}' not found`);
+        throw new NotFoundError(
+          `Billing cycle with key '${validatedDto.billingCycleKey}' not found`,
+        );
       }
 
       // Billing cycle from repository always has ID (BIGSERIAL PRIMARY KEY)
@@ -396,7 +519,8 @@ export class SubscriptionManagementService {
       subscription.props.planId = billingCycle.props.planId; // Update plan ID to match new billing cycle
     }
     if (validatedDto.stripeSubscriptionId !== undefined) {
-      subscription.props.stripeSubscriptionId = validatedDto.stripeSubscriptionId;
+      subscription.props.stripeSubscriptionId =
+        validatedDto.stripeSubscriptionId;
     }
 
     subscription.props.updatedAt = now();
@@ -404,10 +528,10 @@ export class SubscriptionManagementService {
     let proposed = await this.toSubscriptionDto(subscription);
     const before = await this.emitSubscriptionBefore(
       HookEvents.SubscriptionUpdatedBefore,
-      'api',
+      "api",
       subscription,
       oldDto,
-      proposed
+      proposed,
     );
     proposed = before.newDto ?? proposed;
     revalidateAfterHook(
@@ -422,54 +546,65 @@ export class SubscriptionManagementService {
         stripeSubscriptionId: proposed.stripeSubscriptionId,
         metadata: proposed.metadata,
       }),
-      'subscription update'
+      "subscription update",
     );
-    applySubscriptionDtoMutation(subscription, proposed, { allowKeyChange: false });
+    applySubscriptionDtoMutation(subscription, proposed, {
+      allowKeyChange: false,
+    });
 
-    const updatedSubscription = await this.subscriptionRepository.save(subscription);
-    
+    const updatedSubscription =
+      await this.subscriptionRepository.save(subscription);
+
     const keys = await this.resolveSubscriptionKeys(updatedSubscription);
-    const savedDto = SubscriptionMapper.toDto(
-      updatedSubscription,
-      keys.customerKey,
-      keys.productKey,
-      keys.planKey,
-      keys.billingCycleKey,
-      undefined,
-      await this.toFeatureOverrideDtos(updatedSubscription)
+    const savedDto = await this.enrich(
+      SubscriptionMapper.toDto(
+        updatedSubscription,
+        keys.customerKey,
+        keys.productKey,
+        keys.planKey,
+        keys.billingCycleKey,
+        undefined,
+        await this.toFeatureOverrideDtos(updatedSubscription),
+      ),
     );
     await this.emitSubscriptionAfter(
       HookEvents.SubscriptionUpdatedAfter,
-      'api',
+      "api",
       updatedSubscription,
       oldDto,
-      savedDto
+      savedDto,
     );
     return savedDto;
   }
 
-  async getSubscription(subscriptionKey: string): Promise<SubscriptionDto | null> {
-    const subscription = await this.subscriptionRepository.findByKey(subscriptionKey);
+  async getSubscription(
+    subscriptionKey: string,
+  ): Promise<SubscriptionDto | null> {
+    const subscription =
+      await this.subscriptionRepository.findByKey(subscriptionKey);
     if (!subscription) return null;
-    
+
     const keys = await this.resolveSubscriptionKeys(subscription);
-    return SubscriptionMapper.toDto(
-      subscription,
-      keys.customerKey,
-      keys.productKey,
-      keys.planKey,
-      keys.billingCycleKey,
-      undefined,
-      await this.toFeatureOverrideDtos(subscription)
+    return await this.enrich(
+      SubscriptionMapper.toDto(
+        subscription,
+        keys.customerKey,
+        keys.productKey,
+        keys.planKey,
+        keys.billingCycleKey,
+        undefined,
+        await this.toFeatureOverrideDtos(subscription),
+      ),
     );
   }
-
 
   /**
    * Resolve filter keys to IDs for database querying
    * Returns null if any required entity is not found (to indicate empty result)
    */
-  private async resolveFilterKeys(filters: SubscriptionFilterDto | DetailedSubscriptionFilterDto): Promise<{
+  private async resolveFilterKeys(
+    filters: SubscriptionFilterDto | DetailedSubscriptionFilterDto,
+  ): Promise<{
     customerId?: string;
     planIds?: string[];
     planId?: string;
@@ -481,7 +616,9 @@ export class SubscriptionManagementService {
 
     // Resolve customerKey to customerId
     if (filters.customerKey) {
-      const customer = await this.customerRepository.findByKey(filters.customerKey);
+      const customer = await this.customerRepository.findByKey(
+        filters.customerKey,
+      );
       if (!customer) {
         // Customer not found - return null to indicate empty result
         return null;
@@ -512,7 +649,9 @@ export class SubscriptionManagementService {
       }
     } else if (filters.productKey) {
       // Only productKey - find all plans for this product
-      const product = await this.productRepository.findByKey(filters.productKey);
+      const product = await this.productRepository.findByKey(
+        filters.productKey,
+      );
       if (!product) {
         return { planIds: [] };
       }
@@ -521,12 +660,14 @@ export class SubscriptionManagementService {
         return { planIds: [] };
       }
       // Plans from repository always have IDs (BIGSERIAL PRIMARY KEY)
-      resolved.planIds = plans.map(p => p.id!);
+      resolved.planIds = plans.map((p) => p.id!);
     }
 
     // Resolve billingCycleKey to billingCycleId (only for DetailedSubscriptionFilterDto)
-    if ('billingCycleKey' in filters && filters.billingCycleKey) {
-      const billingCycle = await this.billingCycleRepository.findByKey(filters.billingCycleKey);
+    if ("billingCycleKey" in filters && filters.billingCycleKey) {
+      const billingCycle = await this.billingCycleRepository.findByKey(
+        filters.billingCycleKey,
+      );
       if (!billingCycle) {
         return null;
       }
@@ -535,57 +676,61 @@ export class SubscriptionManagementService {
     }
 
     // Copy other filter properties (date ranges, etc.)
-    if ('activationDateFrom' in filters && filters.activationDateFrom) {
+    if ("activationDateFrom" in filters && filters.activationDateFrom) {
       resolved.activationDateFrom = filters.activationDateFrom;
     }
-    if ('activationDateTo' in filters && filters.activationDateTo) {
+    if ("activationDateTo" in filters && filters.activationDateTo) {
       resolved.activationDateTo = filters.activationDateTo;
     }
-    if ('expirationDateFrom' in filters && filters.expirationDateFrom) {
+    if ("expirationDateFrom" in filters && filters.expirationDateFrom) {
       resolved.expirationDateFrom = filters.expirationDateFrom;
     }
-    if ('expirationDateTo' in filters && filters.expirationDateTo) {
+    if ("expirationDateTo" in filters && filters.expirationDateTo) {
       resolved.expirationDateTo = filters.expirationDateTo;
     }
-    if ('trialEndDateFrom' in filters && filters.trialEndDateFrom) {
+    if ("trialEndDateFrom" in filters && filters.trialEndDateFrom) {
       resolved.trialEndDateFrom = filters.trialEndDateFrom;
     }
-    if ('trialEndDateTo' in filters && filters.trialEndDateTo) {
+    if ("trialEndDateTo" in filters && filters.trialEndDateTo) {
       resolved.trialEndDateTo = filters.trialEndDateTo;
     }
-    if ('currentPeriodStartFrom' in filters && filters.currentPeriodStartFrom) {
+    if ("currentPeriodStartFrom" in filters && filters.currentPeriodStartFrom) {
       resolved.currentPeriodStartFrom = filters.currentPeriodStartFrom;
     }
-    if ('currentPeriodStartTo' in filters && filters.currentPeriodStartTo) {
+    if ("currentPeriodStartTo" in filters && filters.currentPeriodStartTo) {
       resolved.currentPeriodStartTo = filters.currentPeriodStartTo;
     }
-    if ('currentPeriodEndFrom' in filters && filters.currentPeriodEndFrom) {
+    if ("currentPeriodEndFrom" in filters && filters.currentPeriodEndFrom) {
       resolved.currentPeriodEndFrom = filters.currentPeriodEndFrom;
     }
-    if ('currentPeriodEndTo' in filters && filters.currentPeriodEndTo) {
+    if ("currentPeriodEndTo" in filters && filters.currentPeriodEndTo) {
       resolved.currentPeriodEndTo = filters.currentPeriodEndTo;
     }
-    if ('hasStripeId' in filters && filters.hasStripeId !== undefined) {
+    if ("hasStripeId" in filters && filters.hasStripeId !== undefined) {
       resolved.hasStripeId = filters.hasStripeId;
     }
-    if ('hasTrial' in filters && filters.hasTrial !== undefined) {
+    if ("hasTrial" in filters && filters.hasTrial !== undefined) {
       resolved.hasTrial = filters.hasTrial;
     }
-    
+
     // Pass through isArchived filter
-    if ('isArchived' in filters && filters.isArchived !== undefined) {
+    if ("isArchived" in filters && filters.isArchived !== undefined) {
       resolved.isArchived = filters.isArchived;
     }
 
     return resolved;
   }
 
-  async listSubscriptions(filters?: SubscriptionFilterDto): Promise<SubscriptionDto[]> {
-    const validationResult = SubscriptionFilterDtoSchema.safeParse(filters || {});
+  async listSubscriptions(
+    filters?: SubscriptionFilterDto,
+  ): Promise<SubscriptionDto[]> {
+    const validationResult = SubscriptionFilterDtoSchema.safeParse(
+      filters || {},
+    );
     if (!validationResult.success) {
       throw new ValidationError(
-        'Invalid filter parameters',
-        validationResult.error.issues
+        "Invalid filter parameters",
+        validationResult.error.issues,
       );
     }
 
@@ -593,8 +738,10 @@ export class SubscriptionManagementService {
     const resolvedFilters = await this.resolveFilterKeys(validationResult.data);
 
     // If any key resolution returned null/empty, return empty array
-    if (!resolvedFilters || 
-        (resolvedFilters.planIds && resolvedFilters.planIds.length === 0)) {
+    if (
+      !resolvedFilters ||
+      (resolvedFilters.planIds && resolvedFilters.planIds.length === 0)
+    ) {
       return [];
     }
 
@@ -606,7 +753,7 @@ export class SubscriptionManagementService {
       limit: validated.limit,
       offset: validated.offset,
       status: validated.status,
-      isArchived: validated.isArchived
+      isArchived: validated.isArchived,
     };
 
     const results = await this.subscriptionRepository.findAll(dbFilters);
@@ -615,25 +762,32 @@ export class SubscriptionManagementService {
     const dtos: SubscriptionDto[] = [];
     for (const { subscription, customer } of results) {
       const keys = await this.resolveSubscriptionKeys(subscription);
-      dtos.push(SubscriptionMapper.toDto(
-        subscription,
-        keys.customerKey,
-        keys.productKey,
-        keys.planKey,
-        keys.billingCycleKey,
-        customer,
-        await this.toFeatureOverrideDtos(subscription)
-      ));
+      dtos.push(
+        await this.enrich(
+          SubscriptionMapper.toDto(
+            subscription,
+            keys.customerKey,
+            keys.productKey,
+            keys.planKey,
+            keys.billingCycleKey,
+            customer,
+            await this.toFeatureOverrideDtos(subscription),
+          ),
+        ),
+      );
     }
     return dtos;
   }
 
-  async findSubscriptions(filters: DetailedSubscriptionFilterDto): Promise<SubscriptionDto[]> {
-    const validationResult = DetailedSubscriptionFilterDtoSchema.safeParse(filters);
+  async findSubscriptions(
+    filters: DetailedSubscriptionFilterDto,
+  ): Promise<SubscriptionDto[]> {
+    const validationResult =
+      DetailedSubscriptionFilterDtoSchema.safeParse(filters);
     if (!validationResult.success) {
       throw new ValidationError(
-        'Invalid filter parameters',
-        validationResult.error.issues
+        "Invalid filter parameters",
+        validationResult.error.issues,
       );
     }
 
@@ -641,8 +795,10 @@ export class SubscriptionManagementService {
     const resolvedFilters = await this.resolveFilterKeys(validationResult.data);
 
     // If any key resolution returned null/empty, return empty array
-    if (!resolvedFilters || 
-        (resolvedFilters.planIds && resolvedFilters.planIds.length === 0)) {
+    if (
+      !resolvedFilters ||
+      (resolvedFilters.planIds && resolvedFilters.planIds.length === 0)
+    ) {
       return [];
     }
 
@@ -654,7 +810,7 @@ export class SubscriptionManagementService {
       limit: validated.limit,
       offset: validated.offset,
       status: validated.status,
-      isArchived: validated.isArchived
+      isArchived: validated.isArchived,
     };
 
     const results = await this.subscriptionRepository.findAll(dbFilters);
@@ -662,8 +818,10 @@ export class SubscriptionManagementService {
     let filteredResults = results;
     if (filters.hasFeatureOverrides !== undefined) {
       const hasOverrides = filters.hasFeatureOverrides;
-      filteredResults = filteredResults.filter(({ subscription }) => 
-        hasOverrides ? subscription.props.featureOverrides.length > 0 : subscription.props.featureOverrides.length === 0
+      filteredResults = filteredResults.filter(({ subscription }) =>
+        hasOverrides
+          ? subscription.props.featureOverrides.length > 0
+          : subscription.props.featureOverrides.length === 0,
       );
     }
 
@@ -671,48 +829,63 @@ export class SubscriptionManagementService {
     const dtos: SubscriptionDto[] = [];
     for (const { subscription, customer } of filteredResults) {
       const keys = await this.resolveSubscriptionKeys(subscription);
-      dtos.push(SubscriptionMapper.toDto(
-        subscription,
-        keys.customerKey,
-        keys.productKey,
-        keys.planKey,
-        keys.billingCycleKey,
-        customer,
-        await this.toFeatureOverrideDtos(subscription)
-      ));
+      dtos.push(
+        await this.enrich(
+          SubscriptionMapper.toDto(
+            subscription,
+            keys.customerKey,
+            keys.productKey,
+            keys.planKey,
+            keys.billingCycleKey,
+            customer,
+            await this.toFeatureOverrideDtos(subscription),
+          ),
+        ),
+      );
     }
     return dtos;
   }
 
-  async getSubscriptionsByCustomer(customerKey: string): Promise<SubscriptionDto[]> {
+  async getSubscriptionsByCustomer(
+    customerKey: string,
+  ): Promise<SubscriptionDto[]> {
     const customer = await this.customerRepository.findByKey(customerKey);
     if (!customer) {
       throw new NotFoundError(`Customer with key '${customerKey}' not found`);
     }
 
     // Customer from repository always has ID (BIGSERIAL PRIMARY KEY)
-    const subscriptions = await this.subscriptionRepository.findByCustomerId(customer.id!);
-    
+    const subscriptions = await this.subscriptionRepository.findByCustomerId(
+      customer.id!,
+    );
+
     const dtos: SubscriptionDto[] = [];
     for (const subscription of subscriptions) {
       const keys = await this.resolveSubscriptionKeys(subscription);
-      dtos.push(SubscriptionMapper.toDto(
-        subscription,
-        keys.customerKey,
-        keys.productKey,
-        keys.planKey,
-        keys.billingCycleKey,
-        undefined,
-        await this.toFeatureOverrideDtos(subscription)
-      ));
+      dtos.push(
+        await this.enrich(
+          SubscriptionMapper.toDto(
+            subscription,
+            keys.customerKey,
+            keys.productKey,
+            keys.planKey,
+            keys.billingCycleKey,
+            undefined,
+            await this.toFeatureOverrideDtos(subscription),
+          ),
+        ),
+      );
     }
     return dtos;
   }
 
   async archiveSubscription(subscriptionKey: string): Promise<void> {
-    const subscription = await this.subscriptionRepository.findByKey(subscriptionKey);
+    const subscription =
+      await this.subscriptionRepository.findByKey(subscriptionKey);
     if (!subscription) {
-      throw new NotFoundError(`Subscription with key '${subscriptionKey}' not found`);
+      throw new NotFoundError(
+        `Subscription with key '${subscriptionKey}' not found`,
+      );
     }
 
     const oldDto = await this.toSubscriptionDto(subscription);
@@ -723,30 +896,35 @@ export class SubscriptionManagementService {
     };
     const before = await this.emitSubscriptionBefore(
       HookEvents.SubscriptionArchivedBefore,
-      'api',
+      "api",
       subscription,
       oldDto,
-      proposed
+      proposed,
     );
     proposed = before.newDto ?? proposed;
-    applySubscriptionDtoMutation(subscription, proposed, { allowKeyChange: false });
+    applySubscriptionDtoMutation(subscription, proposed, {
+      allowKeyChange: false,
+    });
 
     // Archive does not change any properties - just sets the archive flag
     subscription.archive();
     const saved = await this.subscriptionRepository.save(subscription);
     await this.emitSubscriptionAfter(
       HookEvents.SubscriptionArchivedAfter,
-      'api',
+      "api",
       saved,
       oldDto,
-      await this.toSubscriptionDto(saved)
+      await this.toSubscriptionDto(saved),
     );
   }
 
   async unarchiveSubscription(subscriptionKey: string): Promise<void> {
-    const subscription = await this.subscriptionRepository.findByKey(subscriptionKey);
+    const subscription =
+      await this.subscriptionRepository.findByKey(subscriptionKey);
     if (!subscription) {
-      throw new NotFoundError(`Subscription with key '${subscriptionKey}' not found`);
+      throw new NotFoundError(
+        `Subscription with key '${subscriptionKey}' not found`,
+      );
     }
 
     const oldDto = await this.toSubscriptionDto(subscription);
@@ -757,39 +935,44 @@ export class SubscriptionManagementService {
     };
     const before = await this.emitSubscriptionBefore(
       HookEvents.SubscriptionUnarchivedBefore,
-      'api',
+      "api",
       subscription,
       oldDto,
-      proposed
+      proposed,
     );
     proposed = before.newDto ?? proposed;
-    applySubscriptionDtoMutation(subscription, proposed, { allowKeyChange: false });
+    applySubscriptionDtoMutation(subscription, proposed, {
+      allowKeyChange: false,
+    });
 
     // Unarchive just clears the archive flag
     subscription.unarchive();
     const saved = await this.subscriptionRepository.save(subscription);
     await this.emitSubscriptionAfter(
       HookEvents.SubscriptionUnarchivedAfter,
-      'api',
+      "api",
       saved,
       oldDto,
-      await this.toSubscriptionDto(saved)
+      await this.toSubscriptionDto(saved),
     );
   }
 
   async deleteSubscription(subscriptionKey: string): Promise<void> {
-    const subscription = await this.subscriptionRepository.findByKey(subscriptionKey);
+    const subscription =
+      await this.subscriptionRepository.findByKey(subscriptionKey);
     if (!subscription) {
-      throw new NotFoundError(`Subscription with key '${subscriptionKey}' not found`);
+      throw new NotFoundError(
+        `Subscription with key '${subscriptionKey}' not found`,
+      );
     }
 
     const oldDto = await this.toSubscriptionDto(subscription);
     await this.emitSubscriptionBefore(
       HookEvents.SubscriptionDeletedBefore,
-      'api',
+      "api",
       subscription,
       oldDto,
-      null
+      null,
     );
 
     // Subscription from repository always has ID (BIGSERIAL PRIMARY KEY)
@@ -798,29 +981,51 @@ export class SubscriptionManagementService {
 
     await this.emitSubscriptionAfter(
       HookEvents.SubscriptionDeletedAfter,
-      'api',
+      "api",
       subscription,
       oldDto,
-      null
+      null,
     );
   }
 
+  private validateOverrideExpiry(
+    type: OverrideType,
+    value?: Date | string | null,
+  ): Date | null {
+    if (!Object.values(OverrideType).includes(type))
+      throw new ValidationError("Invalid override type");
+    if (type !== OverrideType.Timed) {
+      if (value != null)
+        throw new ValidationError("Only timed overrides accept expiresAt");
+      return null;
+    }
+    if (!value) throw new ValidationError("Timed overrides require expiresAt");
+    const expiry = utcDate(value, "expiresAt");
+    if (expiry <= this.clock.now())
+      throw new ValidationError("expiresAt must be in the future");
+    return expiry;
+  }
+
   async addFeatureOverride(
-    subscriptionKey: string, 
-    featureKey: string, 
-    value: string, 
-    overrideType: OverrideType = OverrideType.Permanent
+    subscriptionKey: string,
+    featureKey: string,
+    value: string,
+    overrideType: OverrideType = OverrideType.Permanent,
+    expiresAt?: Date | string | null,
   ): Promise<void> {
-    const subscription = await this.subscriptionRepository.findByKey(subscriptionKey);
+    const subscription =
+      await this.subscriptionRepository.findByKey(subscriptionKey);
     if (!subscription) {
-      throw new NotFoundError(`Subscription with key '${subscriptionKey}' not found`);
+      throw new NotFoundError(
+        `Subscription with key '${subscriptionKey}' not found`,
+      );
     }
 
     // Block updates if subscription is archived
     if (subscription.isArchived) {
       throw new DomainError(
         `Cannot add feature override to archived subscription with key '${subscriptionKey}'. ` +
-        'Please unarchive the subscription first.'
+          "Please unarchive the subscription first.",
       );
     }
 
@@ -832,48 +1037,76 @@ export class SubscriptionManagementService {
     // Validate value against feature type
     FeatureValueValidator.validate(value, feature.props.valueType);
 
+    this.validateOverrideExpiry(overrideType, expiresAt);
     const oldDto = await this.toSubscriptionDto(subscription);
     let valueToApply = value;
     let typeToApply = overrideType;
     const before = await this.emitSubscriptionBefore(
       HookEvents.SubscriptionFeatureOverrideAddedBefore,
-      'api',
+      "api",
       subscription,
       oldDto,
       { ...oldDto, updatedAt: now().toISOString() },
-      { featureKey, value, overrideType }
+      {
+        featureKey,
+        value,
+        overrideType,
+        expiresAt: expiresAt ? utcDate(expiresAt).toISOString() : null,
+      },
     );
     valueToApply = before.extras.value ?? value;
     typeToApply = (before.extras.overrideType as OverrideType) ?? overrideType;
     if (before.newDto) {
-      applySubscriptionDtoMutation(subscription, before.newDto, { allowKeyChange: false });
+      applySubscriptionDtoMutation(subscription, before.newDto, {
+        allowKeyChange: false,
+      });
     }
 
     // Feature from repository always has ID (BIGSERIAL PRIMARY KEY)
     FeatureValueValidator.validate(valueToApply, feature.props.valueType);
-    subscription.addFeatureOverride(feature.id!, valueToApply, typeToApply);
+    const expiry = this.validateOverrideExpiry(
+      typeToApply,
+      before.extras.expiresAt,
+    );
+    subscription.addFeatureOverride(
+      feature.id!,
+      valueToApply,
+      typeToApply,
+      expiry,
+    );
     const saved = await this.subscriptionRepository.save(subscription);
     await this.emitSubscriptionAfter(
       HookEvents.SubscriptionFeatureOverrideAddedAfter,
-      'api',
+      "api",
       saved,
       oldDto,
       await this.toSubscriptionDto(saved),
-      { featureKey, value: valueToApply, overrideType: typeToApply }
+      {
+        featureKey,
+        value: valueToApply,
+        overrideType: typeToApply,
+        expiresAt: expiry?.toISOString() ?? null,
+      },
     );
   }
 
-  async removeFeatureOverride(subscriptionKey: string, featureKey: string): Promise<void> {
-    const subscription = await this.subscriptionRepository.findByKey(subscriptionKey);
+  async removeFeatureOverride(
+    subscriptionKey: string,
+    featureKey: string,
+  ): Promise<void> {
+    const subscription =
+      await this.subscriptionRepository.findByKey(subscriptionKey);
     if (!subscription) {
-      throw new NotFoundError(`Subscription with key '${subscriptionKey}' not found`);
+      throw new NotFoundError(
+        `Subscription with key '${subscriptionKey}' not found`,
+      );
     }
 
     // Block updates if subscription is archived
     if (subscription.isArchived) {
       throw new DomainError(
         `Cannot remove feature override from archived subscription with key '${subscriptionKey}'. ` +
-        'Please unarchive the subscription first.'
+          "Please unarchive the subscription first.",
       );
     }
 
@@ -885,11 +1118,11 @@ export class SubscriptionManagementService {
     const oldDto = await this.toSubscriptionDto(subscription);
     await this.emitSubscriptionBefore(
       HookEvents.SubscriptionFeatureOverrideRemovedBefore,
-      'api',
+      "api",
       subscription,
       oldDto,
       { ...oldDto, updatedAt: now().toISOString() },
-      { featureKey }
+      { featureKey },
     );
 
     // Feature from repository always has ID (BIGSERIAL PRIMARY KEY)
@@ -897,77 +1130,87 @@ export class SubscriptionManagementService {
     const saved = await this.subscriptionRepository.save(subscription);
     await this.emitSubscriptionAfter(
       HookEvents.SubscriptionFeatureOverrideRemovedAfter,
-      'api',
+      "api",
       saved,
       oldDto,
       await this.toSubscriptionDto(saved),
-      { featureKey }
+      { featureKey },
     );
   }
 
   async clearTemporaryOverrides(subscriptionKey: string): Promise<void> {
-    const subscription = await this.subscriptionRepository.findByKey(subscriptionKey);
+    const subscription =
+      await this.subscriptionRepository.findByKey(subscriptionKey);
     if (!subscription) {
-      throw new NotFoundError(`Subscription with key '${subscriptionKey}' not found`);
+      throw new NotFoundError(
+        `Subscription with key '${subscriptionKey}' not found`,
+      );
     }
 
     // Block updates if subscription is archived
     if (subscription.isArchived) {
       throw new DomainError(
         `Cannot clear temporary overrides for archived subscription with key '${subscriptionKey}'. ` +
-        'Please unarchive the subscription first.'
+          "Please unarchive the subscription first.",
       );
     }
 
     const oldDto = await this.toSubscriptionDto(subscription);
     const before = await this.emitSubscriptionBefore(
       HookEvents.SubscriptionTemporaryOverridesClearedBefore,
-      'api',
+      "api",
       subscription,
       oldDto,
-      { ...oldDto, updatedAt: now().toISOString() }
+      { ...oldDto, updatedAt: now().toISOString() },
     );
     if (before.newDto) {
-      applySubscriptionDtoMutation(subscription, before.newDto, { allowKeyChange: false });
+      applySubscriptionDtoMutation(subscription, before.newDto, {
+        allowKeyChange: false,
+      });
     }
 
     subscription.clearTemporaryOverrides();
     const saved = await this.subscriptionRepository.save(subscription);
     await this.emitSubscriptionAfter(
       HookEvents.SubscriptionTemporaryOverridesClearedAfter,
-      'api',
+      "api",
       saved,
       oldDto,
-      await this.toSubscriptionDto(saved)
+      await this.toSubscriptionDto(saved),
     );
   }
 
-
   private calculatePeriodEnd(startDate: Date, billingCycle: any): Date | null {
     // For forever billing cycles, return null (never expires)
-    if (billingCycle.props.durationUnit === 'forever') {
+    if (billingCycle.props.durationUnit === "forever") {
       return null;
     }
-    
+
     const endDate = new Date(startDate);
-    
+
     switch (billingCycle.props.durationUnit) {
-      case 'days':
+      case "days":
         endDate.setDate(endDate.getDate() + billingCycle.props.durationValue);
         break;
-      case 'weeks':
-        endDate.setDate(endDate.getDate() + (billingCycle.props.durationValue * 7));
+      case "weeks":
+        endDate.setDate(
+          endDate.getDate() + billingCycle.props.durationValue * 7,
+        );
         break;
-      case 'months':
+      case "months":
         endDate.setMonth(endDate.getMonth() + billingCycle.props.durationValue);
         break;
-      case 'years':
-        endDate.setFullYear(endDate.getFullYear() + billingCycle.props.durationValue);
+      case "years":
+        endDate.setFullYear(
+          endDate.getFullYear() + billingCycle.props.durationValue,
+        );
         break;
       default:
-        throw new ValidationError(`Unknown duration unit: ${billingCycle.props.durationUnit}`);
+        throw new ValidationError(
+          `Unknown duration unit: ${billingCycle.props.durationUnit}`,
+        );
     }
-    
+
     return endDate;
   }
 
@@ -981,10 +1224,10 @@ export class SubscriptionManagementService {
   private generateVersionedKey(baseKey: string): string {
     const versionPattern = /-v(\d+)$/;
     const match = baseKey.match(versionPattern);
-    
+
     if (match) {
       const currentVersion = parseInt(match[1], 10);
-      const base = baseKey.replace(versionPattern, '');
+      const base = baseKey.replace(versionPattern, "");
       return `${base}-v${currentVersion + 1}`;
     } else {
       return `${baseKey}-v1`;
@@ -993,17 +1236,17 @@ export class SubscriptionManagementService {
 
   /**
    * Process expired subscriptions and transition them to configured plans.
-   * 
+   *
    * This method:
    * 1. Finds all expired subscriptions (status='expired', not archived) whose plan has a transition requirement
    * 2. For each expired subscription:
    *    - Creates a new subscription to the transition billing cycle first
    *    - Archives the old subscription after the replacement is persisted
    *    - New subscription key is versioned: original key + "-vX" (or increments if already versioned)
-   * 
+   *
    * Note: Plans do not have grace periods. A subscription is expired when
    * `expirationDate <= NOW()` and there is no cancellation.
-   * 
+   *
    * @returns Report of processed subscriptions
    */
   async transitionExpiredSubscriptions(): Promise<TransitionExpiredSubscriptionsReport> {
@@ -1011,22 +1254,25 @@ export class SubscriptionManagementService {
       processed: 0,
       transitioned: 0,
       archived: 0,
-      errors: []
+      errors: [],
     };
 
     // Find all expired subscriptions with transition plans (optimized query with join)
-    const expiredSubscriptions = await this.subscriptionRepository.findExpiredWithTransitionPlans(1000);
+    const expiredSubscriptions =
+      await this.subscriptionRepository.findExpiredWithTransitionPlans(1000);
 
     for (const expiredSubscription of expiredSubscriptions) {
       try {
         report.processed++;
 
         // Get the plan (already verified to have transition in query, but need it for the key)
-        const plan = await this.planRepository.findById(expiredSubscription.planId);
+        const plan = await this.planRepository.findById(
+          expiredSubscription.planId,
+        );
         if (!plan) {
           report.errors.push({
             subscriptionKey: expiredSubscription.key,
-            error: `Plan with id '${expiredSubscription.planId}' not found`
+            error: `Plan with id '${expiredSubscription.planId}' not found`,
           });
           continue;
         }
@@ -1034,11 +1280,13 @@ export class SubscriptionManagementService {
         // Plan already verified to have transition requirement in query
         // Transition configured - archive old subscription and create new one
         // Get customer
-        const customer = await this.customerRepository.findById(expiredSubscription.customerId);
+        const customer = await this.customerRepository.findById(
+          expiredSubscription.customerId,
+        );
         if (!customer) {
           report.errors.push({
             subscriptionKey: expiredSubscription.key,
-            error: `Customer with id '${expiredSubscription.customerId}' not found`
+            error: `Customer with id '${expiredSubscription.customerId}' not found`,
           });
           continue;
         }
@@ -1047,28 +1295,32 @@ export class SubscriptionManagementService {
         if (!plan.props.onExpireTransitionToBillingCycleKey) {
           report.errors.push({
             subscriptionKey: expiredSubscription.key,
-            error: `Plan '${plan.id}' does not have onExpireTransitionToBillingCycleKey set`
+            error: `Plan '${plan.id}' does not have onExpireTransitionToBillingCycleKey set`,
           });
           continue;
         }
 
-        const transitionBillingCycle = await this.billingCycleRepository.findByKey(
-          plan.props.onExpireTransitionToBillingCycleKey
-        );
+        const transitionBillingCycle =
+          await this.billingCycleRepository.findByKey(
+            plan.props.onExpireTransitionToBillingCycleKey,
+          );
         if (!transitionBillingCycle) {
           report.errors.push({
             subscriptionKey: expiredSubscription.key,
-            error: `Billing cycle with key '${plan.props.onExpireTransitionToBillingCycleKey}' not found`
+            error: `Billing cycle with key '${plan.props.onExpireTransitionToBillingCycleKey}' not found`,
           });
           continue;
         }
 
-        const newSubscriptionKey = this.generateVersionedKey(expiredSubscription.key);
-        const existing = await this.subscriptionRepository.findByKey(newSubscriptionKey);
+        const newSubscriptionKey = this.generateVersionedKey(
+          expiredSubscription.key,
+        );
+        const existing =
+          await this.subscriptionRepository.findByKey(newSubscriptionKey);
         if (existing) {
           report.errors.push({
             subscriptionKey: expiredSubscription.key,
-            error: `Generated subscription key '${newSubscriptionKey}' already exists`
+            error: `Generated subscription key '${newSubscriptionKey}' already exists`,
           });
           continue;
         }
@@ -1076,14 +1328,16 @@ export class SubscriptionManagementService {
         const currentPeriodStart = now();
         const currentPeriodEnd = this.calculatePeriodEnd(
           currentPeriodStart,
-          transitionBillingCycle
+          transitionBillingCycle,
         );
 
-        const transitionPlan = await this.planRepository.findById(transitionBillingCycle.props.planId);
+        const transitionPlan = await this.planRepository.findById(
+          transitionBillingCycle.props.planId,
+        );
         if (!transitionPlan) {
           report.errors.push({
             subscriptionKey: expiredSubscription.key,
-            error: `Plan with id '${transitionBillingCycle.props.planId}' not found for transition`
+            error: `Plan with id '${transitionBillingCycle.props.planId}' not found for transition`,
           });
           continue;
         }
@@ -1105,37 +1359,43 @@ export class SubscriptionManagementService {
           featureOverrides: [],
           metadata: expiredSubscription.props.metadata,
           createdAt: now(),
-          updatedAt: now()
+          updatedAt: now(),
         });
 
-        let createdProposed = SubscriptionMapper.toDto(
-          newSubscription,
-          customer.key,
-          transitionPlan.productKey,
-          transitionPlan.key,
-          transitionBillingCycle.key
+        let createdProposed = await this.enrich(
+          SubscriptionMapper.toDto(
+            newSubscription,
+            customer.key,
+            transitionPlan.productKey,
+            transitionPlan.key,
+            transitionBillingCycle.key,
+          ),
         );
         const createBefore = await this.emitSubscriptionBefore(
           HookEvents.SubscriptionCreatedBefore,
-          'system',
+          "system",
           newSubscription,
           null,
-          createdProposed
+          createdProposed,
         );
         createdProposed = createBefore.newDto ?? createdProposed;
-        applySubscriptionDtoMutation(newSubscription, createdProposed, { allowKeyChange: true });
+        applySubscriptionDtoMutation(newSubscription, createdProposed, {
+          allowKeyChange: true,
+        });
 
-        const savedNew = await this.subscriptionRepository.save(newSubscription);
+        const savedNew =
+          await this.subscriptionRepository.save(newSubscription);
         await this.emitSubscriptionAfter(
           HookEvents.SubscriptionCreatedAfter,
-          'system',
+          "system",
           savedNew,
           null,
-          await this.toSubscriptionDto(savedNew)
+          await this.toSubscriptionDto(savedNew),
         );
         report.transitioned++;
 
-        const oldArchivedDto = await this.toSubscriptionDto(expiredSubscription);
+        const oldArchivedDto =
+          await this.toSubscriptionDto(expiredSubscription);
         let archivedProposed: SubscriptionDto = {
           ...oldArchivedDto,
           isArchived: true,
@@ -1143,27 +1403,30 @@ export class SubscriptionManagementService {
         };
         const archiveBefore = await this.emitSubscriptionBefore(
           HookEvents.SubscriptionArchivedBefore,
-          'system',
+          "system",
           expiredSubscription,
           oldArchivedDto,
-          archivedProposed
+          archivedProposed,
         );
         archivedProposed = archiveBefore.newDto ?? archivedProposed;
-        applySubscriptionDtoMutation(expiredSubscription, archivedProposed, { allowKeyChange: false });
+        applySubscriptionDtoMutation(expiredSubscription, archivedProposed, {
+          allowKeyChange: false,
+        });
         expiredSubscription.markAsTransitioned();
-        const archivedSaved = await this.subscriptionRepository.save(expiredSubscription);
+        const archivedSaved =
+          await this.subscriptionRepository.save(expiredSubscription);
         await this.emitSubscriptionAfter(
           HookEvents.SubscriptionArchivedAfter,
-          'system',
+          "system",
           archivedSaved,
           oldArchivedDto,
-          await this.toSubscriptionDto(archivedSaved)
+          await this.toSubscriptionDto(archivedSaved),
         );
         report.archived++;
       } catch (error) {
         report.errors.push({
           subscriptionKey: expiredSubscription.key,
-          error: error instanceof Error ? error.message : String(error)
+          error: error instanceof Error ? error.message : String(error),
         });
       }
     }
@@ -1171,4 +1434,8 @@ export class SubscriptionManagementService {
     return report;
   }
 
+  private async enrich(dto: SubscriptionDto): Promise<SubscriptionDto> {
+    if (!this.catalog) return dto;
+    return { ...dto, addons: await this.catalog.subscriptionAddons(dto.key) };
+  }
 }

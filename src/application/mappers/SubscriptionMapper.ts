@@ -1,8 +1,14 @@
-import { Subscription, FeatureOverride } from '../../domain/entities/Subscription.js';
-import { SubscriptionDto, FeatureOverrideDto } from '../dtos/SubscriptionDto.js';
-import { SubscriptionStatus } from '../../domain/value-objects/SubscriptionStatus.js';
-import { Customer } from '../../domain/entities/Customer.js';
-import { CustomerMapper } from './CustomerMapper.js';
+import {
+  Subscription,
+  FeatureOverride,
+} from "../../domain/entities/Subscription.js";
+import {
+  SubscriptionDto,
+  FeatureOverrideDto,
+} from "../dtos/SubscriptionDto.js";
+import { SubscriptionStatus } from "../../domain/value-objects/SubscriptionStatus.js";
+import { Customer } from "../../domain/entities/Customer.js";
+import { CustomerMapper } from "./CustomerMapper.js";
 
 export class SubscriptionMapper {
   static toDto(
@@ -12,9 +18,10 @@ export class SubscriptionMapper {
     planKey: string,
     billingCycleKey: string,
     customer?: Customer | null,
-    featureOverrides?: FeatureOverrideDto[]
+    featureOverrides?: FeatureOverrideDto[],
   ): SubscriptionDto {
     return {
+      addons: [],
       key: subscription.key,
       customerKey,
       productKey,
@@ -24,20 +31,26 @@ export class SubscriptionMapper {
       isArchived: subscription.isArchived,
       activationDate: subscription.props.activationDate?.toISOString() ?? null,
       expirationDate: subscription.props.expirationDate?.toISOString() ?? null,
-      cancellationDate: subscription.props.cancellationDate?.toISOString() ?? null,
+      cancellationDate:
+        subscription.props.cancellationDate?.toISOString() ?? null,
       trialEndDate: subscription.props.trialEndDate?.toISOString() ?? null,
-      currentPeriodStart: subscription.props.currentPeriodStart?.toISOString() ?? null,
-      currentPeriodEnd: subscription.props.currentPeriodEnd?.toISOString() ?? null,
+      currentPeriodStart:
+        subscription.props.currentPeriodStart?.toISOString() ?? null,
+      currentPeriodEnd:
+        subscription.props.currentPeriodEnd?.toISOString() ?? null,
       stripeSubscriptionId: subscription.props.stripeSubscriptionId ?? null,
       metadata: subscription.props.metadata ?? null,
       customer: customer ? CustomerMapper.toDto(customer) : null,
       featureOverrides: featureOverrides ?? [],
       createdAt: subscription.props.createdAt.toISOString(),
-      updatedAt: subscription.props.updatedAt.toISOString()
+      updatedAt: subscription.props.updatedAt.toISOString(),
     };
   }
 
-  static toDomain(raw: any, featureOverrides: FeatureOverride[] = []): Subscription {
+  static toDomain(
+    raw: any,
+    featureOverrides: FeatureOverride[] = [],
+  ): Subscription {
     return new Subscription(
       {
         key: raw.key,
@@ -46,38 +59,57 @@ export class SubscriptionMapper {
         billingCycleId: raw.billing_cycle_id as number,
         status: this.parseStatus(raw.computed_status),
         isArchived: raw.is_archived === true,
-        activationDate: raw.activation_date ? new Date(raw.activation_date) : undefined,
-        expirationDate: raw.expiration_date ? new Date(raw.expiration_date) : undefined,
-        cancellationDate: raw.cancellation_date ? new Date(raw.cancellation_date) : undefined,
-        trialEndDate: raw.trial_end_date ? new Date(raw.trial_end_date) : undefined,
-        currentPeriodStart: raw.current_period_start ? new Date(raw.current_period_start) : undefined,
-        currentPeriodEnd: raw.current_period_end ? new Date(raw.current_period_end) : undefined,
+        activationDate: raw.activation_date
+          ? new Date(raw.activation_date)
+          : undefined,
+        expirationDate: raw.expiration_date
+          ? new Date(raw.expiration_date)
+          : undefined,
+        cancellationDate: raw.cancellation_date
+          ? new Date(raw.cancellation_date)
+          : undefined,
+        trialEndDate: raw.trial_end_date
+          ? new Date(raw.trial_end_date)
+          : undefined,
+        currentPeriodStart: raw.current_period_start
+          ? new Date(raw.current_period_start)
+          : undefined,
+        currentPeriodEnd: raw.current_period_end
+          ? new Date(raw.current_period_end)
+          : undefined,
         stripeSubscriptionId: raw.stripe_subscription_id,
         featureOverrides,
         metadata: raw.metadata,
         createdAt: new Date(raw.created_at),
         updatedAt: new Date(raw.updated_at),
-        transitionedAt: raw.transitioned_at ? new Date(raw.transitioned_at) : undefined
+        transitionedAt: raw.transitioned_at
+          ? new Date(raw.transitioned_at)
+          : undefined,
       },
-      raw.id as number | undefined
+      raw.id as number | undefined,
     );
   }
 
-  static parseStatus(computedStatus: string | null | undefined): SubscriptionStatus {
-    const normalized = (computedStatus ?? '').trim().toLowerCase().replace(/-/g, '_');
+  static parseStatus(
+    computedStatus: string | null | undefined,
+  ): SubscriptionStatus {
+    const normalized = (computedStatus ?? "")
+      .trim()
+      .toLowerCase()
+      .replace(/-/g, "_");
     switch (normalized) {
-      case 'pending':
+      case "pending":
         return SubscriptionStatus.Pending;
-      case 'active':
+      case "active":
         return SubscriptionStatus.Active;
-      case 'trial':
+      case "trial":
         return SubscriptionStatus.Trial;
-      case 'cancelled':
-      case 'canceled':
+      case "cancelled":
+      case "canceled":
         return SubscriptionStatus.Cancelled;
-      case 'cancellation_pending':
+      case "cancellation_pending":
         return SubscriptionStatus.CancellationPending;
-      case 'expired':
+      case "expired":
         return SubscriptionStatus.Expired;
       default:
         throw new Error(`Unknown subscription status '${computedStatus}'`);
@@ -85,8 +117,11 @@ export class SubscriptionMapper {
   }
 
   static formatStatus(status: SubscriptionStatus | string): string {
-    if (status === SubscriptionStatus.CancellationPending || status === 'CancellationPending') {
-      return 'cancellation_pending';
+    if (
+      status === SubscriptionStatus.CancellationPending ||
+      status === "CancellationPending"
+    ) {
+      return "cancellation_pending";
     }
     return String(status).toLowerCase();
   }
@@ -108,15 +143,14 @@ export class SubscriptionMapper {
       metadata: subscription.props.metadata ?? null,
       created_at: subscription.props.createdAt,
       updated_at: subscription.props.updatedAt,
-      transitioned_at: subscription.props.transitionedAt ?? null
+      transitioned_at: subscription.props.transitionedAt ?? null,
     };
-    
+
     // Only include id for updates (not inserts)
     if (subscription.id !== undefined) {
       record.id = subscription.id;
     }
-    
+
     return record;
   }
 }
-
